@@ -1,0 +1,12 @@
+# All agronomy values below are illustrative only and must be verified with a
+# qualified cocoa extension source before any real-world use.
+thresholds:
+  rainfall_7d_medium_mm: 25  # PLACEHOLDER - verify with agronomy source
+  rainfall_7d_high_mm: 50  # PLACEHOLDER - verify with agronomy source
+  humidity_7d_medium_pct: 82  # PLACEHOLDER - verify with agronomy source
+  humidity_7d_high_pct: 90  # PLACEHOLDER - verify with agronomy source
+  min_spray_interval_days: 14  # PLACEHOLDER - verify with agronomy source
+confidence_threshold: 0.7
+llm:
+  timeout_seconds: 20
+  max_tokens: 300
