@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Cocoa Field Station</title>
+  <desc id="desc">A cocoa pod and leaf growing from a field row.</desc>
+  <defs>
+    <linearGradient id="pod" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9b5d35"/>
+      <stop offset="1" stop-color="#683c2b"/>
+    </linearGradient>
+  </defs>
+  <circle cx="256" cy="256" r="238" fill="#f5f2e9"/>
+  <circle cx="256" cy="256" r="215" fill="none" stroke="#d4d2c5" stroke-width="5"/>
+  <path d="M106 365c72-39 229-39 300 0" fill="none" stroke="#315c42" stroke-width="17" stroke-linecap="round"/>
+  <path d="M137 398c66-25 171-25 238 0" fill="none" stroke="#78906a" stroke-width="10" stroke-linecap="round"/>
+  <path d="M256 322c-69-7-113-54-108-122 5-67 58-119 108-140 50 21 103 73 108 140 5 68-39 115-108 122Z" fill="url(#pod)" stroke="#4a3428" stroke-width="9"/>
+  <path d="M256 66c-25 43-39 91-39 144 0 44 13 81 39 112 26-31 39-68 39-112 0-53-14-101-39-144Z" fill="none" stroke="#d79a5e" stroke-width="9" stroke-linecap="round"/>
+  <path d="M256 88v216" fill="none" stroke="#e8bd87" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+  <path d="M263 121c34-47 83-52 119-43-10 47-40 83-94 89" fill="#547d50" stroke="#315c42" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M278 156c28-25 57-42 88-58" fill="none" stroke="#c1d0a8" stroke-width="6" stroke-linecap="round"/>
+  <path d="M157 336c22 12 48 19 77 21" fill="none" stroke="#dca36c" stroke-width="6" stroke-linecap="round" opacity=".85"/>
+</svg>

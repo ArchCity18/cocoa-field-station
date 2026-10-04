@@ -20,6 +20,15 @@ streamlit run app.py
 
 Sign-in requires a Google OAuth client. Create a Google OAuth web client with `http://localhost:8501/oauth2callback` as an authorized redirect URI. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, then replace the client ID, client secret, and cookie secret. Keep `secrets.toml` private; it is excluded by `.gitignore`. For a deployed app, set the redirect URI to the public app URL ending in `/oauth2callback` and register the same URI with Google.
 
+## Deploy on Streamlit Community Cloud
+
+1. Push this repository to GitHub. Keep `.streamlit/secrets.toml` private; only commit the `.streamlit/secrets.toml.example` template.
+2. At [share.streamlit.io](https://share.streamlit.io), choose **Create app**, select this repository and branch, and set the entrypoint to `app.py`.
+3. Deploy once to obtain the app URL. In the app's Community Cloud settings, paste the contents of `.streamlit/secrets.toml` into **Secrets**, set `LLM_MOCK = "1"`, and update `[auth].redirect_uri` to `https://YOUR-APP-NAME.streamlit.app/oauth2callback`.
+4. Add that same HTTPS callback URL to the Google OAuth web client's **Authorized redirect URIs**, save the client, then restart the Community Cloud app.
+
+The local SQLite database is suitable for a prototype demo and is not configured as durable shared storage for a hosted production app.
+
 The **Create account** option sends users to Google's sign-in flow, where they can create a Google account if needed. This prototype does not create a separate Cocoa account. It stores plot and decision data in one shared local SQLite database, so sign-in does not yet provide per-user data isolation.
 
 The app creates `cocoa.db` on first run and seeds 30 days of simulated weather for three plots. Set `COCOA_DB_PATH` to change the database location. Use `pytest` to run the unit tests.
