@@ -4,3 +4,10 @@ __pycache__/
 .kilo/
 .streamlit/secrets.toml
 cocoa.db
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/.env
+backend/vendor/
+backend/.env
+backend/config.php

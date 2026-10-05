@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Cocoa Field Station",
+    "slug": "cocoa-field-station-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {"package": "org.cocoafieldstation.mobile", "usesCleartextTraffic": true},
+    "splash": {"backgroundColor": "#F7F3EA"},
+    "ios": {"bundleIdentifier": "org.cocoafieldstation.mobile"}
+  }
+}

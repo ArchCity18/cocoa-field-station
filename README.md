@@ -6,6 +6,10 @@ The app opens on an interactive welcome screen with a **Get started** button, fo
 
 The app includes a deterministic mock recommender so the demo works without an AI service. Streamlit Community Cloud hosts the app code; it does not bundle or run a separate model automatically. To use a live model, connect an OpenAI-compatible chat-completions endpoint and provide its model name and, if required, API key.
 
+## Information Security mobile assignment
+
+The mobile assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). Follow [`mobile/README.md`](mobile/README.md) to run the API with XAMPP and launch the Expo client. It demonstrates account registration, email one-time-code two-factor authentication, Administrator and Field Officer role-based access, and salted password hashing with PBKDF2. The PHP API is the authority for authentication and authorization; the mobile UI is not a security boundary. The report and test walkthrough are in [`mobile/REPORT.md`](mobile/REPORT.md).
+
 ## Setup
 
 Requires Python 3.11 or newer.

@@ -1,0 +1,9 @@
+{
+  "name": "cocoa-field-station/security-api",
+  "description": "Mailer dependency for the local coursework OTP API",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "phpmailer/phpmailer": "^6.9"
+  }
+}
