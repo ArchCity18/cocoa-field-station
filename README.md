@@ -2,7 +2,9 @@
 
 A demo prototype for human-reviewed cocoa black-pod decisions. Every observation is simulated. This is not farm advice, and the configured agronomy values are placeholders that require verification with a qualified cocoa extension source.
 
-The app opens on an interactive welcome screen with a **Get started** button, followed by Google sign-in or account creation through Google OpenID Connect. The app never collects or stores passwords. The field overview has selectable plot cards, weather measure and date-window controls, a human review form, and a filterable decision journal. A cocoa-inspired Streamlit theme is in `.streamlit/config.toml`.
+The app opens on an interactive welcome screen with a **Get started** button, followed by Google sign-in or account creation through Google OpenID Connect. The app never collects or stores passwords. The field overview has a plot selector, weather measure and date-window controls, a human review form, and a filterable decision journal. A cocoa-inspired Streamlit theme is in `.streamlit/config.toml`.
+
+The app includes a deterministic mock recommender so the demo works without an AI service. Streamlit Community Cloud hosts the app code; it does not bundle or run a separate model automatically. To use a live model, connect an OpenAI-compatible chat-completions endpoint and provide its model name and, if required, API key.
 
 ## Setup
 
@@ -23,9 +25,20 @@ Sign-in requires a Google OAuth client. Create a Google OAuth web client with `h
 ## Deploy on Streamlit Community Cloud
 
 1. Push this repository to GitHub. Keep `.streamlit/secrets.toml` private; only commit the `.streamlit/secrets.toml.example` template.
-2. At [share.streamlit.io](https://share.streamlit.io), choose **Create app**, select this repository and branch, and set the entrypoint to `app.py`.
-3. Deploy once to obtain the app URL. In the app's Community Cloud settings, paste the contents of `.streamlit/secrets.toml` into **Secrets**, set `LLM_MOCK = "1"`, and update `[auth].redirect_uri` to `https://YOUR-APP-NAME.streamlit.app/oauth2callback`.
-4. Add that same HTTPS callback URL to the Google OAuth web client's **Authorized redirect URIs**, save the client, then restart the Community Cloud app.
+2. At [share.streamlit.io](https://share.streamlit.io), choose **Create app**, select `ArchCity18/cocoa-field-station`, branch `main`, and entrypoint `app.py`.
+3. Deploy once to reserve the app URL. Open the app's **Settings → Secrets** and paste a TOML configuration based on `.streamlit/secrets.toml.example`. Set `[auth].redirect_uri` to `https://YOUR-APP-NAME.streamlit.app/oauth2callback`. Reuse your OAuth client ID, but use a newly rotated Google client secret if the old one was ever shared.
+4. Add that same HTTPS callback URL to the Google OAuth web client's **Authorized redirect URIs**, save the client, then reboot the Community Cloud app.
+
+For the no-provider demo, keep `LLM_MOCK = "1"`. To use a real provider, add these root-level keys in Community Cloud **Secrets** and set mock mode to `"0"`:
+
+```toml
+LLM_MOCK = "0"
+LLM_BASE_URL = "https://YOUR-PROVIDER-BASE-URL/v1"
+LLM_MODEL = "YOUR-SERVED-MODEL-NAME"
+LLM_API_KEY = "YOUR-PROVIDER-API-KEY"
+```
+
+The endpoint should support `POST {LLM_BASE_URL}/chat/completions` and return an OpenAI-compatible chat-completions response. Get the URL, model name, and key from your chosen model host; do not commit them to GitHub. The app falls back to its mock recommender if the model URL or model name is missing.
 
 The local SQLite database is suitable for a prototype demo and is not configured as durable shared storage for a hosted production app.
 

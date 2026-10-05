@@ -146,7 +146,6 @@ def show_plot_picker():
         "Choose a plot",
         options=list(PLOTS),
         selection_mode="single",
-        default=st.session_state.selected_plot,
         key="selected_plot",
         label_visibility="collapsed",
         width="stretch",
