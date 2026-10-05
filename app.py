@@ -12,6 +12,7 @@ from data.seed import PLOTS, generate_seed_data
 
 ROOT = Path(__file__).parent
 LOGO = ROOT / "assets" / "cocoa-field-station-logo.svg"
+HERO = ROOT / "assets" / "cacao-grove-hero.svg"
 
 st.set_page_config(
     page_title="Cocoa Field Station",
@@ -34,54 +35,47 @@ ACTION_ICONS = {
 }
 
 
-def select_plot(plot_id):
-    """Apply plot-card changes before keyed sidebar widgets are instantiated."""
-    st.session_state.selected_plot = plot_id
-    st.session_state.current_recommendation = None
-
-
 def show_home():
-    """Give first-time visitors a clear, confident entry into the demo."""
-    st.badge("FIELD INTELLIGENCE · DEMO", icon=":material/science:", color="orange")
-    hero_left, hero_right = st.columns([1.35, 0.65], vertical_alignment="center")
+    """Welcome growers with cocoa-specific language and a distinct visual identity."""
+    st.badge("A COCOA GROWER'S FIELD DESK", icon=":material/eco:", color="green")
+    hero_left, hero_right = st.columns([1.05, 0.95], vertical_alignment="center", gap="large")
     with hero_left:
-        st.title("Better field decisions start with a clearer picture.", icon=":material/eco:")
+        st.title("Know your cocoa fields. Tend them with confidence.")
         st.write(
-            "Cocoa Field Station brings plot conditions, transparent recommendations, "
-            "and grower judgement into one calm workspace."
+            "A thoughtful view of changing conditions across your cocoa plots, "
+            "with practical next steps you can review before you act."
         )
-        preview_plot = st.selectbox("Choose a plot to explore", list(PLOTS), key="home_plot")
+        preview_plot = st.selectbox("Start with a plot", list(PLOTS), key="home_plot")
         preview = pd.DataFrame(db.weather_for_plot(preview_plot, limit=7))
         if not preview.empty:
-            metric_a, metric_b, metric_c = st.columns(3)
-            metric_a.metric("Recent rainfall", f"{preview['rainfall_mm'].sum():.1f} mm")
-            metric_b.metric("Average humidity", f"{preview['humidity_pct'].mean():.0f}%")
-            metric_c.metric("Observations", len(preview))
-        if st.button("Enter field station", type="primary", icon=":material/arrow_forward:"):
+            metrics = st.columns(3)
+            metrics[0].metric("Rain this week", f"{preview['rainfall_mm'].sum():.1f} mm", border=True)
+            metrics[1].metric("Average humidity", f"{preview['humidity_pct'].mean():.0f}%", border=True)
+            metrics[2].metric("Field notes", f"{len(preview)} days", border=True)
+        if st.button("Explore the field station", type="primary", icon=":material/arrow_forward:"):
             st.session_state.started = True
             st.session_state.selected_plot = preview_plot
             st.rerun()
     with hero_right:
-        with st.container(border=True):
-            if LOGO.exists():
-                st.image(str(LOGO), width=150)
-            st.subheader("Observe → Review → Decide")
-            st.write("Recent conditions become an explainable suggestion, with the final call always in human hands.")
-            st.caption("A focused prototype for cocoa plot monitoring.")
-    st.space("small")
-    with st.container(border=True):
-        step_cols = st.columns(4)
-        for col, number, title, detail in zip(
-            step_cols,
-            ("01", "02", "03", "04"),
-            ("Observe", "Understand", "Decide", "Learn"),
-            ("Compare plot conditions", "Review evidence and confidence", "Approve or record an override", "Keep a decision history"),
-        ):
-            with col:
-                st.caption(number)
-                st.markdown(f"**{title}**")
-                st.caption(detail)
-    st.caption("Demo data is simulated. Agronomy thresholds are unverified placeholders; suggestions are not farm advice.")
+        st.image(str(HERO), width="stretch", caption="An illustrated view of a cocoa-growing landscape")
+    st.space("medium")
+    st.subheader("A field routine built around your judgement")
+    steps = st.columns(3)
+    for col, icon, heading, detail in zip(
+        steps,
+        (":material/water_drop:", ":material/visibility:", ":material/how_to_reg:"),
+        ("Read the conditions", "See why it matters", "Make the call"),
+        (
+            "Bring recent rainfall, humidity, and temperature into view.",
+            "Review the evidence and confidence behind each suggestion.",
+            "Approve the suggestion or record your own decision and reason.",
+        ),
+    ):
+        with col.container(border=True):
+            st.markdown(icon)
+            st.markdown(f"**{heading}**")
+            st.caption(detail)
+    st.caption("DEMO NOTE · All weather is simulated. Agronomy thresholds are unverified placeholders, not farm advice.")
 
 
 def show_authentication():
@@ -138,10 +132,6 @@ def show_sidebar():
             horizontal=False,
         )
         st.space("small")
-        st.caption("ACTIVE PLOT")
-        selected_plot = st.selectbox("Select a plot", list(PLOTS), key="selected_plot")
-        st.caption(PLOTS[selected_plot])
-        st.space("small")
         st.caption("ACCOUNT")
         name = st.user.get("name") or st.user.get("email") or "Signed in"
         st.caption(name)
@@ -150,49 +140,28 @@ def show_sidebar():
         st.caption("SIMULATED DATA · NOT FARM ADVICE")
 
 
-def get_plot_metrics(plot_id):
-    observations = db.weather_for_plot(plot_id, limit=7)
-    frame = pd.DataFrame(observations)
-    if frame.empty:
-        return frame, 0.0, 0.0, 0
-    return frame, float(frame["rainfall_mm"].sum()), float(frame["humidity_pct"].mean()), len(frame)
-
-
 def show_plot_picker():
-    st.caption("FIELD OVERVIEW  /  PLOTS")
-    st.title("Your plots", icon=":material/eco:")
-    st.write("Select a station to review its conditions and the latest decision.")
-    cols = st.columns(3)
-    for col, (plot, description) in zip(cols, PLOTS.items()):
-        observations, rain, humidity, count = get_plot_metrics(plot)
-        active = st.session_state.selected_plot == plot
-        with col:
-            with st.container(border=True, height="stretch"):
-                st.badge("ACTIVE STATION" if active else "FIELD PLOT", color="green" if active else "gray")
-                st.subheader(plot)
-                st.caption(description)
-                a, b = st.columns(2)
-                a.metric("Rain · recent", f"{rain:.1f} mm", chart_data=observations["rainfall_mm"].tolist() if not observations.empty else [])
-                b.metric("Mean humidity", f"{humidity:.0f}%")
-                st.caption(f"{count} recent weather observations")
-                st.button(
-                    "Open station" if not active else "Station selected",
-                    key=f"select-{plot}",
-                    type="primary" if active else "secondary",
-                    icon=":material/arrow_forward:",
-                    width="stretch",
-                    on_click=select_plot,
-                    args=(plot,),
-                )
+    st.caption("FIELD JOURNAL  /  SELECT A PLOT")
+    selected_plot = st.pills(
+        "Choose a plot",
+        options=list(PLOTS),
+        selection_mode="single",
+        default=st.session_state.selected_plot,
+        key="selected_plot",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    selected_plot = selected_plot or list(PLOTS)[0]
+    st.caption(PLOTS[selected_plot])
 
 
 def show_plot_monitor(plot_id):
     observations = db.weather_for_plot(plot_id)
     frame = pd.DataFrame(observations)
-    st.caption(f"FIELD OVERVIEW  /  {plot_id.upper()}")
+    st.caption(f"FIELD NOTES  /  {plot_id.upper()}")
     top_left, top_right = st.columns([1.4, 0.6], vertical_alignment="center")
     with top_left:
-        st.title(plot_id, icon=":material/eco:")
+        st.title(f"{plot_id} at a glance", icon=":material/eco:")
         st.write(PLOTS[plot_id])
     with top_right:
         st.badge("SIMULATED FIELD DATA", icon=":material/science:", color="orange")
@@ -201,10 +170,10 @@ def show_plot_monitor(plot_id):
         frame["date"] = pd.to_datetime(frame["date"])
         recent = frame.tail(7)
         summary = st.columns(4)
-        summary[0].metric("Rainfall · 7 readings", f"{recent['rainfall_mm'].sum():.1f} mm")
-        summary[1].metric("Humidity · average", f"{recent['humidity_pct'].mean():.0f}%")
-        summary[2].metric("Temperature · average", f"{recent['temp_c'].mean():.1f} °C")
-        summary[3].metric("Latest reading", frame["date"].iloc[-1].strftime("%d %b"))
+        summary[0].metric("Rainfall · 7 days", f"{recent['rainfall_mm'].sum():.1f} mm", border=True)
+        summary[1].metric("Average humidity", f"{recent['humidity_pct'].mean():.0f}%", border=True)
+        summary[2].metric("Average temperature", f"{recent['temp_c'].mean():.1f} °C", border=True)
+        summary[3].metric("Most recent reading", frame["date"].iloc[-1].strftime("%d %b"), border=True)
 
     left, right = st.columns([1.55, 0.85], gap="large")
     with left:
@@ -299,6 +268,12 @@ def show_journal():
     if not rows:
         st.info("The journal is empty. Open a plot and create its first reading.", icon=":material/auto_stories:")
         return
+    pending_count = sum(row["human_decision"] is None for row in rows)
+    recorded_count = len(rows) - pending_count
+    journal_metrics = st.columns(3)
+    journal_metrics[0].metric("Field readings", len(rows), border=True)
+    journal_metrics[1].metric("Awaiting review", pending_count, border=True)
+    journal_metrics[2].metric("Grower decisions", recorded_count, border=True)
     records = []
     for row in rows:
         records.append({
@@ -342,9 +317,9 @@ if not st.user.get("is_logged_in", False):
     st.stop()
 
 show_sidebar()
-show_plot_picker()
 st.space("small")
 if st.session_state.workspace_view == "Plot monitor":
+    show_plot_picker()
     show_plot_monitor(st.session_state.selected_plot)
 else:
     show_journal()

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 660" role="img" aria-labelledby="title desc">
+<title id="title">Cocoa grove in the rainy season</title>
+<desc id="desc">Illustrated cocoa trees bearing pods on a green hillside beneath a warm morning sky.</desc>
+<defs>
+  <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#f4dfbf"/><stop offset="1" stop-color="#f7f0df"/></linearGradient>
+  <linearGradient id="hill" x2="0" y2="1"><stop stop-color="#9ca77a"/><stop offset="1" stop-color="#566e4b"/></linearGradient>
+  <linearGradient id="pod" x2=".9" y2="1"><stop stop-color="#c58a53"/><stop offset="1" stop-color="#80503a"/></linearGradient>
+</defs>
+<rect width="960" height="660" rx="38" fill="url(#sky)"/>
+<circle cx="756" cy="130" r="70" fill="#e5a85e" opacity=".78"/>
+<path d="M0 340c140-88 258-80 393-9 125 66 251-68 567-21v350H0Z" fill="#b7b88d"/>
+<path d="M0 405c182-92 281-67 419 8 142 77 284-80 541-21v268H0Z" fill="url(#hill)"/>
+<path d="M0 507c160-68 293-34 433 28 153 68 314-64 527-14v139H0Z" fill="#3c5b43"/>
+<!-- distant grove -->
+<g fill="#56704c" opacity=".72">
+ <circle cx="119" cy="344" r="50"/><circle cx="169" cy="342" r="65"/><circle cx="225" cy="355" r="46"/>
+ <circle cx="635" cy="338" r="50"/><circle cx="686" cy="332" r="67"/><circle cx="746" cy="348" r="49"/>
+ <circle cx="851" cy="356" r="56"/><circle cx="901" cy="365" r="43"/>
+</g>
+<!-- central cocoa tree -->
+<path d="M479 565c11-107 8-183-4-256h34c-4 93 6 170 27 256Z" fill="#76503b"/>
+<path d="M491 384c-70-66-114-98-171-111l13-23c69 20 112 59 171 105m20 24c52-74 102-105 160-123l9 25c-66 25-105 63-155 128" fill="none" stroke="#76503b" stroke-width="20" stroke-linecap="round"/>
+<g fill="#456b4a" stroke="#36583f" stroke-width="5">
+ <ellipse cx="352" cy="244" rx="95" ry="45" transform="rotate(20 352 244)"/>
+ <ellipse cx="458" cy="206" rx="112" ry="52" transform="rotate(-8 458 206)"/>
+ <ellipse cx="567" cy="238" rx="105" ry="49" transform="rotate(12 567 238)"/>
+ <ellipse cx="654" cy="285" rx="87" ry="43" transform="rotate(-20 654 285)"/>
+ <ellipse cx="393" cy="292" rx="88" ry="42" transform="rotate(-18 393 292)"/>
+</g>
+<!-- leaf veins -->
+<g fill="none" stroke="#a9bd87" stroke-width="3" opacity=".9">
+ <path d="M281 219q68 16 136 42m-24-77q39 24 67 53m45-70q5 45 3 87m37-26q-23 36-49 56m158-7q-61 2-111 29"/>
+</g>
+<!-- cacao pods -->
+<g fill="url(#pod)" stroke="#684533" stroke-width="5">
+ <path d="M374 318c-21-7-27-31-17-55 9-23 28-40 45-48 15 14 25 37 20 62-5 25-26 48-48 41Z"/>
+ <path d="M564 333c-19 4-34-14-35-37-2-23 8-46 20-59 19 7 36 25 39 48 3 24-7 44-24 48Z"/>
+ <path d="M637 374c-17 1-29-16-27-37 1-21 13-40 26-50 17 9 29 28 27 49-1 21-12 37-26 38Z"/>
+</g>
+<g fill="none" stroke="#dda66a" stroke-width="4" stroke-linecap="round">
+ <path d="M394 222q-13 44-7 82m162-65q17 35 15 75m67-25q-8 35-4 70"/>
+</g>
+<!-- foreground leaves -->
+<g fill="#78915d" stroke="#476947" stroke-width="5">
+ <path d="M75 594c53-101 128-123 181-116-25 69-82 115-181 116Z"/>
+ <path d="M199 634c30-91 96-133 147-140 0 72-41 125-147 140Z"/>
+ <path d="M758 633c27-99 96-143 157-143-2 73-46 128-157 143Z"/>
+ <path d="M689 632c-4-86-57-143-107-163-20 69 4 128 107 163Z"/>
+</g>
+<g fill="none" stroke="#c2cc9b" stroke-width="4" stroke-linecap="round">
+ <path d="M80 589q88-64 151-100m-26 137q54-89 131-128m427 127q73-81 139-118m-213 119q2-88-91-151"/>
+</g>
+<path d="M40 616c191-43 692-44 881 0" fill="none" stroke="#d6bd8f" stroke-width="4" opacity=".7"/>
+</svg>

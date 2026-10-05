@@ -1,10 +1,33 @@
 [theme]
 base = "light"
-primaryColor = "#365A43"
-backgroundColor = "#F7F5EF"
-secondaryBackgroundColor = "#EDEBE3"
-textColor = "#24372D"
-font = "sans-serif"
-headingFont = "serif"
+primaryColor = "#3D6046"
+backgroundColor = "#F7F3EA"
+secondaryBackgroundColor = "#EEE7DA"
+textColor = "#28342B"
+font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
 codeFont = "monospace"
-borderColor = "#DAD8CE"
+baseFontSize = 16
+headingFontSizes = ["42px", "30px", "23px", "18px", "16px", "13px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+borderColor = "#DAD2C2"
+baseRadius = "large"
+buttonRadius = "large"
+linkUnderline = false
+greenColor = "#55724C"
+greenBackgroundColor = "#E4EADB"
+greenTextColor = "#314B35"
+orangeColor = "#A95E3C"
+orangeBackgroundColor = "#F3E4D8"
+orangeTextColor = "#79442D"
+yellowColor = "#9A6C25"
+yellowBackgroundColor = "#F4EBD4"
+blueColor = "#476B73"
+blueBackgroundColor = "#E2EBE8"
+chartCategoricalColors = ["#52734C", "#A95E3C", "#D19A52", "#71877B", "#735F4A"]
+
+[theme.sidebar]
+backgroundColor = "#304837"
+secondaryBackgroundColor = "#3B5641"
+textColor = "#F4F0E6"
+borderColor = "#526A54"
