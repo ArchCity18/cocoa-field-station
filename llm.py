@@ -48,13 +48,13 @@ def _mock(payload):
 
 
 def recommend(payload):
-    if _setting("LLM_MOCK", "1") == "1":
-        return _validate(_mock(payload))
+    mock_enabled = _setting("LLM_MOCK", "1") == "1"
     base = _setting("LLM_BASE_URL").rstrip("/")
     key = _setting("LLM_API_KEY")
     model = _setting("LLM_MODEL")
-    if not base or not model:
-        raise RuntimeError("Set LLM_MOCK=1 or configure LLM_BASE_URL and LLM_MODEL")
+    # An incomplete hosted-model setup should still leave the demo usable.
+    if mock_enabled or not base or not model:
+        return _validate(_mock(payload))
     prompt = "Return JSON only with action (spray|wait|inspect), rationale, evidence (array), cited_case_ids (array). Never invent case IDs.\n" + json.dumps(payload)
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "temperature": 0, "max_tokens": 300}
