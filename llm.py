@@ -1,9 +1,23 @@
 """OpenAI-compatible JSON client with a deterministic local mock."""
 import json
 import os
+
 import requests
+import streamlit as st
 
 ACTIONS = {"spray", "wait", "inspect"}
+
+
+def _setting(name, default=""):
+    """Read model settings from environment variables or Streamlit secrets."""
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    try:
+        value = st.secrets.get(name, default)
+    except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+        return default
+    return str(value)
 
 
 def _validate(value):
@@ -34,11 +48,11 @@ def _mock(payload):
 
 
 def recommend(payload):
-    if os.getenv("LLM_MOCK", "0") == "1":
+    if _setting("LLM_MOCK", "1") == "1":
         return _validate(_mock(payload))
-    base = os.getenv("LLM_BASE_URL", "").rstrip("/")
-    key = os.getenv("LLM_API_KEY", "")
-    model = os.getenv("LLM_MODEL", "")
+    base = _setting("LLM_BASE_URL").rstrip("/")
+    key = _setting("LLM_API_KEY")
+    model = _setting("LLM_MODEL")
     if not base or not model:
         raise RuntimeError("Set LLM_MOCK=1 or configure LLM_BASE_URL and LLM_MODEL")
     prompt = "Return JSON only with action (spray|wait|inspect), rationale, evidence (array), cited_case_ids (array). Never invent case IDs.\n" + json.dumps(payload)
