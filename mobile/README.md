@@ -17,6 +17,14 @@ An Expo mobile client for the Information Security assignment: identify users, v
 4. Copy `config.example.php` to `config.php`. Set `pepper` to a private random string. XAMPP defaults often use MySQL user `root` with an empty password; use your own local database credentials if different.
 5. Check the API at `http://localhost/cocoa-security/api.php?route=health`; it should return JSON with `"ok":true`.
 
+If you imported an earlier version of this assignment schema, migrate its role labels in phpMyAdmin before using the new `user`/`admin` labels:
+
+```sql
+ALTER TABLE users MODIFY role VARCHAR(32) NOT NULL DEFAULT 'user';
+UPDATE users SET role = CASE role WHEN 'Administrator' THEN 'admin' WHEN 'Field Officer' THEN 'user' ELSE role END;
+ALTER TABLE users MODIFY role ENUM('admin', 'user') NOT NULL DEFAULT 'user';
+```
+
 ### Enable email one-time codes
 
 The code is generated and checked only by the PHP server; only its keyed hash and expiry are stored. For actual delivery, run `composer install` in the backend folder and set `smtp_host`, `smtp_port`, `smtp_username`, `smtp_password`, `smtp_encryption`, and `mail_from` in private `config.php`. Use an email provider's SMTP credentials or app password, not your normal account password. Configure this before using login.
@@ -48,14 +56,14 @@ Scan the QR code with Expo Go. Your computer and phone must be on the same netwo
 
 ## Try both roles
 
-1. Create an account; registration always assigns the **Field Officer** role. The app refuses passwords under 10 characters. This account can only access `/field/summary`.
+1. Create an account; registration always assigns the **user** role. The app refuses passwords under 10 characters. This account can use `/field/summary` but cannot access the admin directory.
 2. Sign in with that email/password. Enter the one-time code received by email (or read the local Apache error log in development-only mode).
-3. To demonstrate **Administrator**, register a second account, then promote that account from phpMyAdmin using a known email:
+3. To demonstrate **admin**, register a second account, then promote that account from phpMyAdmin using a known email:
 
    ```sql
-   UPDATE users SET role='Administrator' WHERE email='trusted-admin@example.com';
+   UPDATE users SET role='admin' WHERE email='trusted-admin@example.com';
    ```
 
-4. Sign in as that account. It can open the user directory endpoint; the API denies that route to Field Officers even if they try to call it directly.
+4. Sign in as that account. It can open the user directory endpoint; the API denies that route to a `user` token even if the user tries to call it directly.
 
-Never make public account registration grant Administrator privileges. Promote only a trusted account through a protected setup process/database operation.
+Never make public account registration grant `admin` privileges. Promote only a trusted account through a protected setup process/database operation.

@@ -10,7 +10,7 @@ The Expo React Native client is the presentation layer. It communicates with a P
 
 ### User identification
 
-Registration requires a name, unique email address, and a password. Email is normalized to lowercase and stored as the account identifier. Database queries use PDO prepared statements. Registration always assigns the least-privileged Field Officer role; an Administrator must be promoted by a trusted operator.
+Registration requires a name, unique email address, and a password. Email is normalized to lowercase and stored as the account identifier. Database queries use PDO prepared statements. Registration always assigns the least-privileged `user` role; an `admin` must be promoted by a trusted operator.
 
 ### Two-factor authentication
 
@@ -20,7 +20,7 @@ For classroom operation without configured SMTP, a development-only mode writes 
 
 ### Authorization and roles
 
-The two roles are **Administrator** and **Field Officer**. Both can use the field summary; only Administrator can use the account directory. Role checks happen inside each PHP route after the token is validated, so hiding a screen in React Native cannot grant access. Public registration cannot choose a role. The initial trusted administrator is promoted out-of-band through local database administration.
+The two roles are **user** and **admin**. Both can use the field summary; only `admin` can use the account directory. Role checks happen inside each PHP route after the token is validated, so hiding a screen in React Native cannot grant access. Public registration cannot choose a role. The initial trusted admin is promoted out-of-band through local database administration.
 
 ### Salted password storage
 
@@ -28,7 +28,7 @@ PHP `password_hash` with `PASSWORD_ARGON2ID` creates a unique random salt for ea
 
 ## Implementation files
 
-- `mobile/src/App.js`: responsive sign-in, account creation, verification, Field Officer home, and Administrator directory screens.
+- `mobile/src/App.js`: responsive sign-in, account creation, verification, user home, and admin directory screens.
 - `mobile/src/api.js`: API client and opaque token persistence in Expo SecureStore.
 - `backend/api.php`: registration, login, email challenge, verification, logout, session lookup, and role-protected routes.
 - `backend/schema.sql`: MySQL users, challenges, and token tables.
@@ -39,8 +39,8 @@ PHP `password_hash` with `PASSWORD_ARGON2ID` creates a unique random salt for ea
 1. Import `backend/schema.sql` in XAMPP phpMyAdmin and run Apache and MySQL.
 2. Configure private `backend/config.php`; configure SMTP for actual delivery, or use the development-only Apache-log code setting in a private local environment.
 3. Set the Expo API URL to the XAMPP computer address, run `npm install` and `npm start` in `mobile/`, and open in Expo Go.
-4. Register a Field Officer, sign in, and complete the emailed code step.
-5. Promote a trusted second account to Administrator using the documented SQL, sign in, and demonstrate the directory. Call the admin route with a Field Officer token to observe the server-side `403` denial.
+4. Register a `user`, sign in, and complete the emailed code step.
+5. Promote a trusted second account to `admin` using the documented SQL, sign in, and demonstrate the directory. Call the admin route with a `user` token to observe the server-side `403` denial.
 6. Inspect the database: password values are Argon2id encoded hashes, challenges contain digests rather than codes, and sessions contain token digests rather than bearer tokens.
 
 ## Security limitations and next improvements

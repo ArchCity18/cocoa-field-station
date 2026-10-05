@@ -31,7 +31,7 @@ export default function App() {
 
   async function loadWorkspace(account) {
     try {
-      if (account.role === 'Administrator') setUsers((await request('/admin/users', { auth: true })).users);
+      if (account.role === 'admin') setUsers((await request('/admin/users', { auth: true })).users);
       else setSummary(await request('/field/summary', { auth: true }));
     } catch (e) { setError(e.message); }
   }
@@ -45,7 +45,7 @@ export default function App() {
         await saveToken(result.token); setUser(result.user); setScreen('home'); await loadWorkspace(result.user);
       } else if (mode === 'register') {
         await request('/register', { method: 'POST', body: { name: form.name, email: form.email, password: form.password } });
-        setMode('login'); Alert.alert('Account created', 'Your account has the Field Officer role. Sign in and verify your email.');
+        setMode('login'); Alert.alert('Account created', 'Your account has the user role. Sign in and verify your email.');
       } else {
         const result = await request('/login', { method: 'POST', body: { email: form.email, password: form.password } });
         setChallenge(result.challenge_id); setScreen('verify');
@@ -60,12 +60,12 @@ export default function App() {
   }
 
   if (user && screen === 'home') {
-    const admin = user.role === 'Administrator';
+    const admin = user.role === 'admin';
     return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content" backgroundColor={C.cream} /><ScrollView contentContainerStyle={s.page}>
       <Brand />
       <View style={s.welcome}><View><Text style={s.kicker}>YOUR FIELD DESK</Text><Text style={s.title}>Good to see you,</Text><Text style={[s.title, { color: C.green }]}>{user.name.split(' ')[0]}.</Text></View><View style={s.avatar}><Text style={s.avatarText}>{user.name[0].toUpperCase()}</Text></View></View>
       <View style={s.identity}><View style={s.roleIcon}><Feather name={admin ? 'shield' : 'map'} size={20} color={C.green} /></View><View style={{ flex: 1 }}><Text style={s.kicker}>SIGNED IN AS</Text><Text style={s.role}>{user.role}</Text><Text style={s.muted}>{user.email}</Text></View><View style={s.verified}><Feather name="check-circle" size={13} color={C.green} /><Text style={s.verifiedText}>VERIFIED</Text></View></View>
-      {admin ? <><Text style={s.section}>Account directory</Text><Text style={s.body}>Administrator workspace · {users.length} registered accounts</Text>{users.map((item) => <View key={item.id} style={s.userRow}><View style={s.avatarMini}><Text style={s.avatarText}>{item.name[0].toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={s.userName}>{item.name}</Text><Text style={s.muted}>{item.email}</Text></View><Text style={s.roleTag}>{item.role}</Text></View>)}</> : <><Text style={s.section}>Field officer workspace</Text><View style={s.feature}><Feather name="sun" size={22} color={C.gold} /><Text style={s.featureTitle}>Your field access is ready</Text><Text style={s.body}>Your verified account can access field station tools. The server checks your role on every protected request.</Text>{summary && <Text style={s.muted}>{summary.account_count} station accounts</Text>}</View></>}
+      {admin ? <><Text style={s.section}>Account directory</Text><Text style={s.body}>Admin workspace · {users.length} registered accounts</Text>{users.map((item) => <View key={item.id} style={s.userRow}><View style={s.avatarMini}><Text style={s.avatarText}>{item.name[0].toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={s.userName}>{item.name}</Text><Text style={s.muted}>{item.email}</Text></View><Text style={s.roleTag}>{item.role}</Text></View>)}</> : <><Text style={s.section}>User workspace</Text><View style={s.feature}><Feather name="sun" size={22} color={C.gold} /><Text style={s.featureTitle}>Your field access is ready</Text><Text style={s.body}>Your verified account can access field station tools. The server checks your role on every protected request.</Text>{summary && <Text style={s.muted}>{summary.account_count} station accounts</Text>}</View></>}
       <View style={s.notice}><Feather name="lock" size={16} color={C.green} /><Text style={s.noticeText}>Passwords are stored as salted hashes. Sign-in requires your password and a one-time email code.</Text></View>
       <Button title="Sign out" secondary busy={busy} onPress={logout} />
     </ScrollView></SafeAreaView>;
@@ -80,7 +80,7 @@ export default function App() {
         {mode === 'register' && <Field label="Your name" icon="user" value={form.name} onChangeText={(v) => change('name', v)} placeholder="e.g. Ama Mensah" />}
         <Field label="Email address" icon="mail" value={form.email} onChangeText={(v) => change('email', v)} keyboardType="email-address" autoCapitalize="none" placeholder="you@example.com" />
         <Field label="Password" icon="lock" value={form.password} onChangeText={(v) => change('password', v)} secureTextEntry placeholder="At least 10 characters" />
-        {mode === 'register' && <Text style={s.helper}>New accounts start with the Field Officer role.</Text>}
+        {mode === 'register' && <Text style={s.helper}>New accounts start with the user role.</Text>}
       </>}
       {!!error && <View style={s.error}><Feather name="alert-circle" size={16} color={C.error} /><Text style={s.errorText}>{error}</Text></View>}
       <Button title={screen === 'verify' ? 'Verify and continue' : mode === 'register' ? 'Create account' : 'Continue securely'} busy={busy} onPress={submit} />

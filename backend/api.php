@@ -43,7 +43,7 @@ if ($method === 'POST' && $path === '/register') {
     if (strlen($password) < 10 || strlen($password) > 1024) { fail(422, 'Use a password between 10 and 1024 characters.'); }
     $hash = password_hash($password . $config['pepper'], PASSWORD_ARGON2ID);
     try {
-        $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,'Field Officer')");
+        $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,'user')");
         $stmt->execute([$name, $email, $hash]);
     } catch (PDOException $e) {
         if ($e->getCode() === '23000') { fail(409, 'An account with that email already exists.'); }
@@ -102,7 +102,7 @@ if ($method === 'POST' && $path === '/logout') {
 
 if ($method === 'GET' && $path === '/admin/users') {
     $user = require_user($pdo);
-    if ($user['role'] !== 'Administrator') { fail(403, 'Administrator role required.'); }
+    if ($user['role'] !== 'admin') { fail(403, 'Admin role required.'); }
     $users = $pdo->query('SELECT id,name,email,role,created_at FROM users ORDER BY created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
     echo json_encode(['ok' => true, 'users' => $users]); exit;
 }
@@ -110,7 +110,7 @@ if ($method === 'GET' && $path === '/admin/users') {
 if ($method === 'GET' && $path === '/field/summary') {
     $user = require_user($pdo);
     $total = (int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
-    echo json_encode(['ok' => true, 'message' => 'Field Officer workspace', 'signed_in_as' => $user['name'], 'account_count' => $total]); exit;
+    echo json_encode(['ok' => true, 'message' => 'User workspace', 'signed_in_as' => $user['name'], 'account_count' => $total]); exit;
 }
 
 fail(404, 'Endpoint not found.');

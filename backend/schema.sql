@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(120) NOT NULL,
     email VARCHAR(254) NOT NULL UNIQUE,
     password_hash VARCHAR(512) NOT NULL,
-    role ENUM('Administrator', 'Field Officer') NOT NULL DEFAULT 'Field Officer',
+    role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -32,5 +32,5 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     INDEX idx_token_user (user_id)
 );
 
--- Grant Administrator only to a trusted account through SQL after registration.
--- Example: UPDATE users SET role='Administrator' WHERE email='admin@example.com';
+-- Grant admin only to a trusted account through SQL after registration.
+-- Example: UPDATE users SET role='admin' WHERE email='admin@example.com';
