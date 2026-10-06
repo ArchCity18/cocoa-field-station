@@ -81,46 +81,60 @@ def show_home():
 
 
 def show_authentication():
-    """Render the configured identity-provider entry point."""
-    st.badge("SECURE SIGN-IN", icon=":material/verified_user:", color="green")
-    st.title("Welcome to your field station")
-    st.write("Sign in with Google, then confirm your identity with your authenticator app.")
-    sign_in_or_up = st.segmented_control(
-        "Choose an account option", ["Sign in", "Create account"],
-        default="Sign in", key="auth_mode",
-    )
+    """Render a focused Google sign-in screen matching the Expo client."""
     try:
         auth_config = st.secrets.get("auth", {})
     except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
         auth_config = {}
     google_config = auth_config.get("google") if hasattr(auth_config, "get") else None
 
-    left, right = st.columns([1, 1])
-    with left:
-        with st.container(border=True):
-            st.subheader("Continue with Google", icon=":material/account_circle:")
-            if sign_in_or_up == "Create account":
-                st.write("Continue to Google to sign in. You can create a Google account in Google's sign-in flow if you need one.")
-            else:
-                st.write("Your password stays with Google. This app never asks for it.")
-            if google_config:
-                if st.button("Continue with Google", type="primary", icon=":material/login:"):
-                    st.login("google")
-            else:
-                st.info(
-                    "Google sign-in is not configured yet. Add OAuth details to `.streamlit/secrets.toml`; setup steps are in the README.",
-                    icon=":material/settings:",
-                )
-            st.caption("The first sign-in asks you to connect Google Authenticator. Future sign-ins require a current six-digit code.")
-    with right:
-        with st.container(border=True):
-            st.subheader("Private by design", icon=":material/lock:")
-            st.write("Authentication uses OpenID Connect. The app receives your verified name and email, and does not store a password.")
-            st.caption("Plot and decision data remains shared in this prototype's local SQLite database.")
+    auth_mode = st.session_state.get("auth_mode", "Sign in")
+    outer_left, auth_panel, outer_right = st.columns([0.55, 1.8, 0.55], vertical_alignment="top")
+    with auth_panel:
+        brand_icon, brand_name = st.columns([0.18, 0.82], vertical_alignment="center")
+        with brand_icon:
+            if LOGO.exists():
+                st.image(str(LOGO), width=48)
+        with brand_name:
+            st.markdown("**Cocoa Field Station**")
+            st.caption("IDENTITY & FIELD ACCESS")
 
-    if st.button("Back to welcome page", icon=":material/arrow_back:"):
-        st.session_state.started = False
-        st.rerun()
+        st.space("small")
+        st.badge("SECURE SIGN-IN", icon=":material/verified_user:", color="green")
+        st.title("Welcome back." if auth_mode == "Sign in" else "Join your field station.")
+        st.write(
+            "Sign in with Google to continue to your cocoa workspace."
+            if auth_mode == "Sign in"
+            else "Create your field station account with Google. It only takes a moment."
+        )
+        auth_mode = st.segmented_control(
+            "Choose an account option", ["Sign in", "Create account"],
+            default="Sign in", key="auth_mode",
+        )
+
+        sign_in_col, privacy_col = st.columns([1.15, 0.85], gap="medium", vertical_alignment="top")
+        with sign_in_col:
+            with st.container(border=True):
+                st.subheader("Continue with Google", icon=":material/account_circle:")
+                st.write("Your password stays with Google. This app never asks for it.")
+                if google_config:
+                    if st.button("Continue with Google", type="primary", icon=":material/login:", width="stretch"):
+                        st.login("google")
+                else:
+                    st.info(
+                        "Google sign-in is not configured yet. Add OAuth details to `.streamlit/secrets.toml`; setup steps are in the README.",
+                        icon=":material/settings:",
+                    )
+                st.caption("First sign-in connects Google Authenticator. Future sign-ins need a current six-digit code.")
+        with privacy_col:
+            with st.container(border=True):
+                st.subheader("Private by design", icon=":material/lock:")
+                st.write("Google verifies your identity. The app stores no Google password.")
+                st.caption("Authenticator secrets are encrypted in the app database. Field records remain shared in this prototype.")
+
+        if st.button("Back to welcome page", icon=":material/arrow_back:"):
+            st.session_state.started = False
+            st.rerun()
 
 
 def clear_mfa_state():
@@ -182,45 +196,57 @@ def require_authenticator():
         except Exception:
             st.error("The saved authenticator key cannot be opened. Check that your Streamlit cookie_secret has not changed.")
             return False
-        st.badge("SECOND STEP", icon=":material/verified_user:", color="green")
-        st.title("Check your authenticator")
-        st.write("Enter the current six-digit code from Google Authenticator.")
     else:
         pending_sub = st.session_state.get("mfa_pending_sub")
         if pending_sub != sub or not st.session_state.get("mfa_pending_secret"):
             st.session_state.mfa_pending_sub = sub
             st.session_state.mfa_pending_secret = totp.new_secret()
         secret = st.session_state.mfa_pending_secret
-        uri = totp.provisioning_uri(secret, email)
-        st.badge("SET UP TWO-STEP VERIFICATION", icon=":material/verified_user:", color="green")
-        st.title("Connect Google Authenticator")
-        st.write("Scan this QR code in Google Authenticator, then enter the code it creates to finish setup.")
-        qr_col, key_col = st.columns([1, 1], vertical_alignment="center")
-        with qr_col:
-            st.image(totp.qr_image(uri), caption="Scan with Google Authenticator")
-        with key_col:
-            st.markdown("**Manual setup key**")
-            st.code(secret, language=None)
-            st.caption("Keep this key private. It can generate sign-in codes for your account.")
+    _, factor_card, _ = st.columns([0.55, 1.9, 0.55], vertical_alignment="top")
+    with factor_card:
+        brand_icon, brand_name = st.columns([0.18, 0.82], vertical_alignment="center")
+        with brand_icon:
+            if LOGO.exists():
+                st.image(str(LOGO), width=48)
+        with brand_name:
+            st.markdown("**Cocoa Field Station**")
+            st.caption("IDENTITY & FIELD ACCESS")
 
-    with st.form("authenticator-code-form"):
-        code = st.text_input("Six-digit code", max_chars=6, placeholder="000000", autocomplete="one-time-code")
-        submitted = st.form_submit_button("Verify and continue", type="primary", icon=":material/lock_open:", width="stretch")
-    if submitted:
-        if totp.verify_code(secret, code):
-            if not enrolled:
-                db.set_totp_secret(sub, totp.encrypt_secret(secret, cookie_secret))
-            st.session_state.mfa_verified_sub = sub
-            st.session_state.pop("mfa_pending_secret", None)
-            st.session_state.pop("mfa_pending_sub", None)
-            st.session_state.mfa_attempts = 0
-            st.rerun()
-        st.session_state.mfa_attempts += 1
-        st.error(f"That code is incorrect. Attempts remaining: {5 - st.session_state.mfa_attempts}.")
-    st.caption(f"Signed in with Google as {email}. The code challenge expires after ten minutes.")
-    if st.button("Sign out", key="mfa_signout", icon=":material/logout:"):
-        clear_mfa_state()
-        st.logout()
+        with st.container(border=True):
+            if enrolled:
+                st.badge("SECOND STEP", icon=":material/verified_user:", color="green")
+                st.title("Check your authenticator")
+                st.write("Enter the current six-digit code from Google Authenticator.")
+            else:
+                st.badge("SET UP TWO-STEP VERIFICATION", icon=":material/verified_user:", color="green")
+                st.title("Connect Google Authenticator")
+                st.write("Scan this QR code, then enter the code it creates to finish setup.")
+                qr_col, key_col = st.columns([1, 1], vertical_alignment="center")
+                with qr_col:
+                    st.image(totp.qr_image(totp.provisioning_uri(secret, email)), caption="Scan with Google Authenticator")
+                with key_col:
+                    st.markdown("**Manual setup key**")
+                    st.code(secret, language=None)
+                    st.caption("Keep this key private. It can generate sign-in codes for your account.")
+
+            with st.form("authenticator-code-form"):
+                code = st.text_input("Six-digit code", max_chars=6, placeholder="000000", autocomplete="one-time-code")
+                submitted = st.form_submit_button("Verify and continue", type="primary", icon=":material/lock_open:", width="stretch")
+            if submitted:
+                if totp.verify_code(secret, code):
+                    if not enrolled:
+                        db.set_totp_secret(sub, totp.encrypt_secret(secret, cookie_secret))
+                    st.session_state.mfa_verified_sub = sub
+                    st.session_state.pop("mfa_pending_secret", None)
+                    st.session_state.pop("mfa_pending_sub", None)
+                    st.session_state.mfa_attempts = 0
+                    st.rerun()
+                st.session_state.mfa_attempts += 1
+                st.error(f"That code is incorrect. Attempts remaining: {5 - st.session_state.mfa_attempts}.")
+            st.caption(f"Signed in with Google as {email}. The code challenge expires after ten minutes.")
+            if st.button("Sign out", key="mfa_signout", icon=":material/logout:"):
+                clear_mfa_state()
+                st.logout()
     return False
 
 

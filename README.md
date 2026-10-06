@@ -8,7 +8,7 @@ The app includes a deterministic mock recommender so the demo works without an A
 
 ## Information Security mobile assignment
 
-The Expo assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). It demonstrates account registration and identification by email or Google, Google Authenticator TOTP two-factor authentication, server-enforced `user` and `admin` authorization, and Argon2id password hashes with salts and a pepper. The Streamlit app also uses Google sign-in followed by TOTP before opening the field workspace. Streamlit Community Cloud uses its own SQLite account-factor records; it does not share the local XAMPP account database. See [`mobile/README.md`](mobile/README.md) and [`mobile/REPORT.md`](mobile/REPORT.md) for the Expo assignment.
+The Streamlit app opens on the cocoa field-station homepage, then presents an Expo-inspired sign-in/create-account screen with Google sign-in and TOTP verification. The Expo assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). It demonstrates account registration and identification by email or Google, Google Authenticator TOTP two-factor authentication, server-enforced `user` and `admin` authorization, and Argon2id password hashes with salts and a pepper. Streamlit Community Cloud uses its own SQLite account-factor records; it does not share the local XAMPP account database. See [`mobile/README.md`](mobile/README.md) and [`mobile/REPORT.md`](mobile/REPORT.md) for the Expo assignment.
 
 ## Setup
 
