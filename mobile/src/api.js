@@ -6,9 +6,22 @@ const HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 export const API_URL = `http://${HOST}/cocoa-security/api.php`;
 const TOKEN_KEY = 'cocoa_session_token';
 
-export const saveToken = (token) => SecureStore.setItemAsync(TOKEN_KEY, token);
-export const readToken = () => SecureStore.getItemAsync(TOKEN_KEY);
-export const clearToken = () => SecureStore.deleteItemAsync(TOKEN_KEY);
+// expo-secure-store's native methods are unavailable in the web build.
+// Keep tokens in browser localStorage on web; use device secure storage on iOS/Android.
+export async function saveToken(token) {
+  if (Platform.OS === 'web') { globalThis.localStorage?.setItem(TOKEN_KEY, token); return; }
+  await SecureStore.setItemAsync(TOKEN_KEY, token);
+}
+
+export async function readToken() {
+  if (Platform.OS === 'web') return globalThis.localStorage?.getItem(TOKEN_KEY) ?? null;
+  return SecureStore.getItemAsync(TOKEN_KEY);
+}
+
+export async function clearToken() {
+  if (Platform.OS === 'web') { globalThis.localStorage?.removeItem(TOKEN_KEY); return; }
+  await SecureStore.deleteItemAsync(TOKEN_KEY);
+}
 
 export async function request(path, { method = 'GET', body, auth = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
