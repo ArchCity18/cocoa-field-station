@@ -37,5 +37,41 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     INDEX idx_token_user (user_id)
 );
 
+CREATE TABLE IF NOT EXISTS field_plots (
+    plot_id VARCHAR(40) NOT NULL PRIMARY KEY,
+    description VARCHAR(200) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS field_weather (
+    plot_id VARCHAR(40) NOT NULL,
+    observation_date DATE NOT NULL,
+    rainfall_mm DECIMAL(7,2) NOT NULL,
+    humidity_pct DECIMAL(5,2) NOT NULL,
+    temp_c DECIMAL(5,2) NOT NULL,
+    days_since_last_spray INT NOT NULL,
+    inspection_note VARCHAR(500) NULL,
+    PRIMARY KEY (plot_id, observation_date),
+    CONSTRAINT fk_field_weather_plot FOREIGN KEY (plot_id) REFERENCES field_plots(plot_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS field_decisions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    plot_id VARCHAR(40) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    risk_bucket ENUM('low', 'medium', 'high') NOT NULL,
+    recommendation ENUM('spray', 'wait', 'inspect') NOT NULL,
+    rationale TEXT NOT NULL,
+    evidence_json JSON NOT NULL,
+    confidence DECIMAL(4,3) NOT NULL,
+    gated TINYINT(1) NOT NULL DEFAULT 0,
+    human_decision ENUM('spray', 'wait', 'inspect') NULL,
+    human_reason VARCHAR(1000) NULL,
+    CONSTRAINT fk_field_decision_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_field_decision_plot FOREIGN KEY (plot_id) REFERENCES field_plots(plot_id),
+    INDEX idx_field_decision_plot_date (plot_id, created_at),
+    INDEX idx_field_decision_user_date (user_id, created_at)
+);
+
 -- Grant admin only to a trusted account through SQL after registration.
 -- Example: UPDATE users SET role='admin' WHERE email='admin@example.com';

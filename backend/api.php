@@ -22,6 +22,8 @@ try {
     );
 } catch (Throwable $e) { fail(500, 'Database unavailable. Check XAMPP MySQL and backend configuration.'); }
 
+ensure_field_workspace($pdo);
+
 $path = isset($_GET['route']) ? '/' . trim((string)$_GET['route'], '/') : (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 $apiPrefix = '/cocoa-security/api.php';
 if (str_starts_with($path, $apiPrefix)) { $path = substr($path, strlen($apiPrefix)); }
@@ -132,10 +134,114 @@ if ($method === 'GET' && $path === '/admin/users') {
     echo json_encode(['ok' => true, 'users' => $users]); exit;
 }
 
+if ($method === 'GET' && $path === '/field/plots') {
+    require_user($pdo);
+    $plots = $pdo->query('SELECT plot_id,description FROM field_plots ORDER BY plot_id')->fetchAll(PDO::FETCH_ASSOC);
+    echo json_encode(['ok' => true, 'plots' => $plots]); exit;
+}
+
+if ($method === 'GET' && $path === '/field/plot') {
+    require_user($pdo);
+    $plotId = trim((string)($_GET['plot_id'] ?? 'Plot A'));
+    $days = min(30, max(7, (int)($_GET['days'] ?? 14)));
+    $stmt = $pdo->prepare('SELECT plot_id,description FROM field_plots WHERE plot_id=?');
+    $stmt->execute([$plotId]); $plot = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$plot) { fail(404, 'Plot not found.'); }
+    $stmt = $pdo->prepare('SELECT observation_date AS date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note FROM field_weather WHERE plot_id=? ORDER BY observation_date DESC LIMIT ?');
+    $stmt->bindValue(1, $plotId); $stmt->bindValue(2, $days, PDO::PARAM_INT); $stmt->execute();
+    $observations = array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
+    foreach ($observations as &$row) { foreach (['rainfall_mm','humidity_pct','temp_c'] as $key) $row[$key] = (float)$row[$key]; $row['days_since_last_spray'] = (int)$row['days_since_last_spray']; }
+    unset($row);
+    $recent = array_slice($observations, -7); $count = count($recent);
+    $summary = ['rainfall_7d_mm' => round(array_sum(array_column($recent, 'rainfall_mm')), 1),
+        'humidity_7d_pct' => $count ? round(array_sum(array_column($recent, 'humidity_pct')) / $count) : 0,
+        'temperature_7d_c' => $count ? round(array_sum(array_column($recent, 'temp_c')) / $count, 1) : 0,
+        'latest_date' => $observations ? $observations[count($observations)-1]['date'] : null,
+        'completeness_days' => $count];
+    echo json_encode(['ok' => true, 'plot' => $plot, 'observations' => $observations, 'summary' => $summary]); exit;
+}
+
+if ($method === 'POST' && $path === '/field/recommendation') {
+    $user = require_user($pdo);
+    $plotId = trim((string)($body['plot_id'] ?? ''));
+    $result = create_field_recommendation($pdo, (int)$user['id'], $plotId);
+    echo json_encode(['ok' => true, 'recommendation' => $result]); exit;
+}
+
+if ($method === 'POST' && $path === '/field/decision') {
+    $user = require_user($pdo);
+    $decisionId = filter_var($body['decision_id'] ?? null, FILTER_VALIDATE_INT);
+    $action = (string)($body['action'] ?? ''); $reason = trim((string)($body['reason'] ?? ''));
+    if (!$decisionId || !in_array($action, ['spray','wait','inspect'], true)) { fail(422, 'Select a valid field decision.'); }
+    $stmt = $pdo->prepare('SELECT recommendation,human_decision FROM field_decisions WHERE id=? AND user_id=?');
+    $stmt->execute([$decisionId, $user['id']]); $decision = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$decision) { fail(404, 'Decision not found.'); }
+    if ($decision['human_decision'] !== null) { fail(409, 'This decision has already been recorded.'); }
+    if ($action !== $decision['recommendation'] && mb_strlen($reason) < 3) { fail(422, 'Add a short reason when you change the suggestion.'); }
+    $stmt = $pdo->prepare('UPDATE field_decisions SET human_decision=?,human_reason=? WHERE id=? AND user_id=? AND human_decision IS NULL');
+    $stmt->execute([$action, $reason !== '' ? mb_substr($reason,0,1000) : null, $decisionId, $user['id']]);
+    echo json_encode(['ok' => true]); exit;
+}
+
+if ($method === 'GET' && $path === '/field/journal') {
+    require_user($pdo);
+    $plotId = trim((string)($_GET['plot_id'] ?? ''));
+    $status = (string)($_GET['status'] ?? 'all');
+    $sql = 'SELECT d.id,d.plot_id,d.created_at,d.risk_bucket,d.recommendation,d.rationale,d.evidence_json,d.confidence,d.gated,d.human_decision,d.human_reason,u.name AS grower_name FROM field_decisions d JOIN users u ON u.id=d.user_id WHERE 1=1';
+    $params = [];
+    if ($plotId !== '' && $plotId !== 'All plots') { $sql .= ' AND d.plot_id=?'; $params[] = $plotId; }
+    if ($status === 'pending') $sql .= ' AND d.human_decision IS NULL';
+    elseif ($status === 'recorded') $sql .= ' AND d.human_decision IS NOT NULL';
+    $sql .= ' ORDER BY d.created_at DESC LIMIT 100';
+    $stmt = $pdo->prepare($sql); $stmt->execute($params); $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rows as &$row) { $row['id'] = (int)$row['id']; $row['confidence'] = (float)$row['confidence']; $row['gated'] = (bool)$row['gated']; $row['evidence'] = json_decode((string)$row['evidence_json'], true) ?: []; unset($row['evidence_json']); }
+    unset($row);
+    echo json_encode(['ok' => true, 'decisions' => $rows]); exit;
+}
+
 if ($method === 'GET' && $path === '/field/summary') {
     $user = require_user($pdo);
     $total = (int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
     echo json_encode(['ok' => true, 'message' => 'User workspace', 'signed_in_as' => $user['name'], 'account_count' => $total]); exit;
+}
+
+function ensure_field_workspace(PDO $pdo): void {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS field_plots (plot_id VARCHAR(40) PRIMARY KEY,description VARCHAR(200) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS field_weather (plot_id VARCHAR(40) NOT NULL,observation_date DATE NOT NULL,rainfall_mm DECIMAL(7,2) NOT NULL,humidity_pct DECIMAL(5,2) NOT NULL,temp_c DECIMAL(5,2) NOT NULL,days_since_last_spray INT NOT NULL,inspection_note VARCHAR(500) NULL,PRIMARY KEY(plot_id,observation_date),CONSTRAINT fk_field_weather_plot FOREIGN KEY(plot_id) REFERENCES field_plots(plot_id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS field_decisions (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,user_id BIGINT UNSIGNED NOT NULL,plot_id VARCHAR(40) NOT NULL,created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,risk_bucket ENUM('low','medium','high') NOT NULL,recommendation ENUM('spray','wait','inspect') NOT NULL,rationale TEXT NOT NULL,evidence_json JSON NOT NULL,confidence DECIMAL(4,3) NOT NULL,gated TINYINT(1) NOT NULL DEFAULT 0,human_decision ENUM('spray','wait','inspect') NULL,human_reason VARCHAR(1000) NULL,CONSTRAINT fk_field_decision_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,CONSTRAINT fk_field_decision_plot FOREIGN KEY(plot_id) REFERENCES field_plots(plot_id),INDEX idx_field_decision_plot_date(plot_id,created_at),INDEX idx_field_decision_user_date(user_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $plots = ['Plot A' => 'Rising rain and humidity', 'Plot B' => 'Recent gaps in observations', 'Plot C' => 'Middle-range conditions'];
+    $insertPlot = $pdo->prepare('INSERT IGNORE INTO field_plots(plot_id,description) VALUES(?,?)');
+    foreach ($plots as $id => $description) $insertPlot->execute([$id,$description]);
+    if ((int)$pdo->query('SELECT COUNT(*) FROM field_weather')->fetchColumn() > 0) return;
+    $insertWeather = $pdo->prepare('INSERT IGNORE INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note) VALUES(?,?,?,?,?,?,?)');
+    foreach ($plots as $plot => $_description) {
+        for ($ago = 29; $ago >= 0; $ago--) {
+            if ($plot === 'Plot B' && in_array($ago, [1,3,5,6], true)) continue;
+            $step = 29 - $ago; $n1 = (sin(($step + 1) * 12.9898 + ord($plot[5])) + 1) / 2; $n2 = (sin(($step + 1) * 78.233 + ord($plot[5]) * 0.7) + 1) / 2;
+            if ($plot === 'Plot A') { $rain = 2 + $step * 0.25 + $n1 * 1.8; $humidity = min(96, 68 + $step * 0.72 + $n2 * 4); $since = 22 + $ago; }
+            elseif ($plot === 'Plot B') { $rain = $n1 * 5; $humidity = 70 + $n2 * 12; $since = 18 + $ago; }
+            else { $rain = 2.5 + $n1 * 3; $humidity = 79 + $n2 * 9; $since = 20 + $ago; }
+            $temp = 23 + $n1 * 7; $date = gmdate('Y-m-d', time() - $ago * 86400);
+            $note = $step % 8 === 0 ? 'Routine simulated field observation.' : null;
+            $insertWeather->execute([$plot,$date,round($rain,1),round($humidity,1),round($temp,1),$since,$note]);
+        }
+    }
+}
+
+function create_field_recommendation(PDO $pdo, int $userId, string $plotId): array {
+    $stmt = $pdo->prepare('SELECT observation_date AS date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray FROM field_weather WHERE plot_id=? ORDER BY observation_date DESC LIMIT 7');
+    $stmt->execute([$plotId]); $days = array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
+    if (!$days) fail(404, 'Plot observations are not available.');
+    $count = count($days); $rain = array_sum(array_map(fn($r)=>(float)$r['rainfall_mm'],$days)); $humidity = array_sum(array_map(fn($r)=>(float)$r['humidity_pct'],$days))/$count; $since = (int)$days[$count-1]['days_since_last_spray'];
+    if ($rain >= 50 && $humidity >= 90) { $bucket = 'high'; $suggestion = $since >= 14 ? 'spray' : 'inspect'; }
+    elseif ($rain >= 25 || $humidity >= 82) { $bucket = 'medium'; $suggestion = 'inspect'; }
+    else { $bucket = 'low'; $suggestion = 'wait'; }
+    $confidence = round($count / 7, 3); $gated = $confidence < 0.7; $action = $gated ? 'inspect' : $suggestion;
+    $evidence = ['Data completeness: ' . $count . '/7 observations', 'Placeholder rule bucket: ' . $bucket . ' (' . $suggestion . ')', '7-day rainfall: ' . round($rain,1) . ' mm', 'Average humidity: ' . round($humidity) . '%'];
+    $rationale = 'Rule-based suggestion from simulated plot observations. Thresholds are illustrative placeholders and need agronomy review. A grower must review the evidence and record the decision; the app never acts on the plot.';
+    $stmt = $pdo->prepare('INSERT INTO field_decisions(user_id,plot_id,risk_bucket,recommendation,rationale,evidence_json,confidence,gated) VALUES(?,?,?,?,?,?,?,?)');
+    $stmt->execute([$userId,$plotId,$bucket,$action,$rationale,json_encode($evidence),$confidence,(int)$gated]);
+    return ['id'=>(int)$pdo->lastInsertId(),'plot_id'=>$plotId,'risk_bucket'=>$bucket,'action'=>$action,'rationale'=>$rationale,'evidence'=>$evidence,'confidence'=>$confidence,'gated'=>$gated,'pending'=>true,'human_decision'=>null,'human_reason'=>null,'ts'=>gmdate(DATE_ATOM)];
 }
 
 fail(404, 'Endpoint not found.');

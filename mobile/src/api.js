@@ -23,7 +23,7 @@ export async function clearToken() {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
 }
 
-export async function request(path, { method = 'GET', body, auth = false } = {}) {
+export async function request(path, { method = 'GET', body, auth = false, query } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (auth) {
     const token = await readToken();
@@ -31,7 +31,8 @@ export async function request(path, { method = 'GET', body, auth = false } = {})
   }
   let response;
   try {
-    response = await fetch(`${API_URL}?route=${encodeURIComponent(path.replace(/^\//, ''))}`, {
+    const params = new URLSearchParams({ route: path.replace(/^\//, ''), ...(query || {}) });
+    response = await fetch(`${API_URL}?${params.toString()}`, {
       method,
       headers,
       ...(body ? { body: JSON.stringify(body) } : {}),

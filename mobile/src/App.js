@@ -5,6 +5,7 @@ import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import QRCode from 'react-native-qrcode-svg';
 import { SvgXml } from 'react-native-svg';
+import FieldWorkspace from './FieldWorkspace';
 import { clearToken, request, saveToken } from './api';
 import groveHero from './groveArtwork';
 
@@ -24,8 +25,6 @@ export default function App() {
   const [challenge, setChallenge] = useState(null);
   const [oauth, setOauth] = useState({});
   const [user, setUser] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [summary, setSummary] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -37,7 +36,7 @@ export default function App() {
   }, { scheme: 'cocoa-field-station-mobile' });
 
   useEffect(() => { request('/public-config').then(setOauth).catch(() => {}); }, []);
-  useEffect(() => { (async () => { try { const result = await request('/me', { auth: true }); setUser(result.user); setScreen('home'); await loadWorkspace(result.user); } catch { await clearToken(); } })(); }, []);
+  useEffect(() => { (async () => { try { const result = await request('/me', { auth: true }); setUser(result.user); setScreen('home'); } catch { await clearToken(); } })(); }, []);
   useEffect(() => {
     if (googleResponse?.type !== 'success') return;
     const idToken = googleResponse.params?.id_token || googleResponse.authentication?.idToken;
@@ -45,17 +44,13 @@ export default function App() {
     (async () => { setBusy(true); setError(''); try { const result = await request('/google-login', { method: 'POST', body: { id_token: idToken } }); setChallenge(result); setScreen('totp'); setForm((f) => ({ ...f, code: '' })); } catch (e) { setError(e.message); } finally { setBusy(false); } })();
   }, [googleResponse]);
 
-  async function loadWorkspace(account) {
-    try { if (account.role === 'admin') setUsers((await request('/admin/users', { auth: true })).users); else setSummary(await request('/field/summary', { auth: true })); }
-    catch (e) { setError(e.message); }
-  }
   function change(key, value) { setForm((old) => ({ ...old, [key]: value })); setError(''); }
   async function submit() {
     setBusy(true); setError('');
     try {
       if (screen === 'totp') {
         const result = await request('/verify-totp', { method: 'POST', body: { challenge_id: challenge.challenge_id, code: form.code } });
-        await saveToken(result.token); setUser(result.user); setScreen('home'); await loadWorkspace(result.user);
+        await saveToken(result.token); setUser(result.user); setScreen('home');
       } else if (mode === 'register') {
         await request('/register', { method: 'POST', body: { name: form.name, email: form.email, password: form.password } });
         setMode('login'); Alert.alert('Account created', 'Your account has the user role. Sign in and connect Google Authenticator.');
@@ -106,14 +101,7 @@ export default function App() {
   }
 
   if (user && screen === 'home') {
-    const admin = user.role === 'admin';
-    return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content" backgroundColor={C.cream} /><ScrollView contentContainerStyle={s.page}>
-      <Brand />
-      <View style={s.welcome}><View><Text style={s.kicker}>YOUR FIELD DESK</Text><Text style={s.title}>Good to see you,</Text><Text style={[s.title, { color: C.green }]}>{user.name.split(' ')[0]}.</Text></View><View style={s.avatar}><Text style={s.avatarText}>{user.name[0].toUpperCase()}</Text></View></View>
-      <View style={s.identity}><View style={s.roleIcon}><Feather name={admin ? 'shield' : 'map'} size={20} color={C.green} /></View><View style={{ flex: 1 }}><Text style={s.kicker}>SIGNED IN AS</Text><Text style={s.role}>{user.role}</Text><Text style={s.muted}>{user.email}</Text></View><View style={s.verified}><Feather name="check-circle" size={13} color={C.green} /><Text style={s.verifiedText}>VERIFIED</Text></View></View>
-      {admin ? <><Text style={s.section}>Account directory</Text><Text style={s.body}>Admin workspace · {users.length} registered accounts</Text>{users.map((item) => <View key={item.id} style={s.userRow}><View style={s.avatarMini}><Text style={s.avatarText}>{item.name[0].toUpperCase()}</Text></View><View style={{ flex: 1 }}><Text style={s.userName}>{item.name}</Text><Text style={s.muted}>{item.email}</Text></View><Text style={s.roleTag}>{item.role}</Text></View>)}</> : <><Text style={s.section}>User workspace</Text><View style={s.feature}><Feather name="sun" size={22} color={C.gold} /><Text style={s.featureTitle}>Your field access is ready</Text><Text style={s.body}>Your verified account can access field station tools. The server checks your role on every protected request.</Text>{summary && <Text style={s.muted}>{summary.account_count} station accounts</Text>}</View></>}
-      <View style={s.notice}><Feather name="lock" size={16} color={C.green} /><Text style={s.noticeText}>Passwords use salted and peppered hashes. Sign-in uses a current code from your authenticator app.</Text></View><Button title="Sign out" secondary busy={busy} onPress={logout} />
-    </ScrollView></SafeAreaView>;
+    return <FieldWorkspace user={user} onLogout={logout} />;
   }
 
   const setup = screen === 'totp' && challenge?.setup_required;

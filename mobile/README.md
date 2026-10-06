@@ -15,7 +15,7 @@ Expo client and PHP/MySQL backend for a coursework login system with user identi
 2. Start Apache and MySQL in the XAMPP Control Panel.
 3. Import schema.sql in http://localhost/phpmyadmin to create cocoa_security.
 4. Copy config.example.php to config.php. Set a long random pepper and Google OAuth client IDs. Keep config.php private and out of Git.
-5. Visit http://localhost/cocoa-security/api.php?route=health; it should return JSON with ok:true.
+5. Visit http://localhost/cocoa-security/api.php?route=health; it should return JSON with ok:true. The updated API creates the plot, observation, and decision tables on first request and seeds clearly simulated observations for Plot A, Plot B, and Plot C.
 
 If you already imported an earlier database, run backend/migrations/002_google_totp.sql once in phpMyAdmin. Back up the database first. This migration adds the Google account identifier and encrypted TOTP secret columns.
 
@@ -34,6 +34,8 @@ Google sign-in creates a user account when needed and then also requires a TOTP 
 For the browser build, run npm run web. The API URL in src/api.js is configured for Android emulator, iOS simulator, and web on the same computer. For a physical phone, replace localhost with your computer's LAN IP and allow Apache through Windows Firewall on a private network.
 
 After creating an account, sign in with email and password. The first successful login shows a QR code and a manual setup key; scan it in Google Authenticator, then enter the current six-digit code to finish enrollment. Later logins ask for the current code. The TOTP secret is encrypted in MySQL using a key derived from the private server pepper. A challenge expires in ten minutes and allows at most five attempts.
+
+After TOTP verification, the app opens the field workspace: plot monitor, recent observation trends, rule-based suggestions for human review, and the decision journal. Admin accounts also see the account directory. These Expo records are stored in the XAMPP `cocoa_security` MySQL database. They are separate from the Streamlit Community Cloud demo and its SQLite data, so updates and decisions do not sync between the two apps. The Expo rule suggestions are a transparent PHP placeholder; they do not call the Streamlit model. All weather is simulated and thresholds are unverified examples, not farm advice.
 
 ## Demonstrate role authorization
 
