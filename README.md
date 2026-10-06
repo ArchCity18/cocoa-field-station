@@ -8,7 +8,7 @@ The app includes a deterministic mock recommender so the demo works without an A
 
 ## Information Security mobile assignment
 
-The mobile assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). Follow [`mobile/README.md`](mobile/README.md) to run the API with XAMPP and launch the Expo client. It demonstrates account registration and identification by email, email-code two-factor authentication, server-enforced `user` and `admin` authorization, and password hashing with a unique Argon2id salt plus a server-side pepper. The PHP API is the authority for authentication and authorization; the mobile UI is not a security boundary. The report and implementation walkthrough are in [`mobile/REPORT.md`](mobile/REPORT.md).
+The mobile assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). Follow [`mobile/README.md`](mobile/README.md) to run the API with XAMPP and launch the Expo client. It demonstrates account registration and identification by email or Google, Google Authenticator TOTP two-factor authentication, server-enforced `user` and `admin` authorization, and password hashing with a unique Argon2id salt plus a server-side pepper. The PHP API is the authority for authentication and authorization; the mobile UI is not a security boundary. The report and implementation walkthrough are in [`mobile/REPORT.md`](mobile/REPORT.md).
 
 ## Setup
 

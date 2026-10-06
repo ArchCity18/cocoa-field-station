@@ -34,6 +34,10 @@ if ($method === 'GET' && $path === '/health') {
     echo json_encode(['ok' => true, 'service' => 'Cocoa Field Station security API']); exit;
 }
 
+if ($method === 'GET' && $path === '/public-config') {
+    echo json_encode(['ok' => true, 'google_web_client_id' => (string)($config['google_web_client_id'] ?? ''), 'google_android_client_id' => (string)($config['google_android_client_id'] ?? ''), 'google_ios_client_id' => (string)($config['google_ios_client_id'] ?? '')]); exit;
+}
+
 if ($method === 'POST' && $path === '/register') {
     $name = trim((string)($body['name'] ?? ''));
     $email = strtolower(trim((string)($body['email'] ?? '')));
@@ -49,37 +53,58 @@ if ($method === 'POST' && $path === '/register') {
         if ($e->getCode() === '23000') { fail(409, 'An account with that email already exists.'); }
         fail(500, 'Could not create the account.');
     }
-    http_response_code(201); echo json_encode(['ok' => true, 'message' => 'Account created. Sign in to verify your email.']); exit;
+    http_response_code(201); echo json_encode(['ok' => true, 'message' => 'Account created. Sign in, then connect your authenticator app.']); exit;
 }
 
 if ($method === 'POST' && $path === '/login') {
     $email = strtolower(trim((string)($body['email'] ?? '')));
     $password = (string)($body['password'] ?? '');
-    $stmt = $pdo->prepare('SELECT id,name,email,password_hash,role FROM users WHERE email=?');
+    $stmt = $pdo->prepare('SELECT id,name,email,password_hash,role,totp_enabled FROM users WHERE email=?');
     $stmt->execute([$email]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$user || !password_verify($password . $config['pepper'], $user['password_hash'])) { fail(401, 'Email or password is incorrect.'); }
-    $code = (string)random_int(100000, 999999);
-    $pdo->prepare('INSERT INTO login_challenges (user_id,code_hash,expires_at) VALUES (?,?,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 10 MINUTE))')
-        ->execute([$user['id'], hash_hmac('sha256', $code, $config['pepper'])]);
-    try { send_code($config, $user['email'], $user['name'], $code); }
-    catch (Throwable $e) { fail(503, 'Could not send the verification code. Check the SMTP settings.'); }
-    echo json_encode(['ok' => true, 'challenge_id' => (int)$pdo->lastInsertId(), 'message' => 'A six-digit code was sent to your email.']); exit;
+    start_totp_challenge($pdo, $config, $user);
 }
 
-if ($method === 'POST' && $path === '/verify') {
+if ($method === 'POST' && $path === '/google-login') {
+    $idToken = (string)($body['id_token'] ?? '');
+    if ($idToken === '' || strlen($idToken) > 10000) { fail(422, 'Google sign-in token is missing.'); }
+    try { $claims = verify_google_id_token($idToken, $config); }
+    catch (Throwable $e) { fail(401, 'Google sign-in could not be verified. Try again.'); }
+    $sub = (string)($claims->sub ?? ''); $email = strtolower((string)($claims->email ?? ''));
+    $name = trim((string)($claims->name ?? 'Google user'));
+    if ($sub === '' || $email === '' || empty($claims->email_verified)) { fail(401, 'Google did not provide a verified account.'); }
+    $stmt = $pdo->prepare('SELECT id,name,email,role,totp_enabled FROM users WHERE google_sub=?');
+    $stmt->execute([$sub]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$user) {
+        $stmt = $pdo->prepare('SELECT id FROM users WHERE email=?'); $stmt->execute([$email]);
+        if ($stmt->fetchColumn()) { fail(409, 'This email already has a password account. Sign in with its password first.'); }
+        try {
+            $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role,google_sub) VALUES (?,?,?,'user',?)");
+            $stmt->execute([$name !== '' ? mb_substr($name, 0, 120) : 'Google user', $email, password_hash(bin2hex(random_bytes(32)) . $config['pepper'], PASSWORD_ARGON2ID), $sub]);
+            $user = ['id' => (int)$pdo->lastInsertId(), 'name' => $name, 'email' => $email, 'role' => 'user', 'totp_enabled' => 0];
+        } catch (PDOException $e) { fail(409, 'That Google account could not be linked.'); }
+    }
+    start_totp_challenge($pdo, $config, $user);
+}
+
+if ($method === 'POST' && $path === '/verify-totp') {
     $challengeId = filter_var($body['challenge_id'] ?? null, FILTER_VALIDATE_INT);
     $code = trim((string)($body['code'] ?? ''));
     if (!$challengeId || !preg_match('/^\d{6}$/', $code)) { fail(422, 'Enter the six-digit code.'); }
     $pdo->beginTransaction();
-    $stmt = $pdo->prepare('SELECT c.*,u.id AS uid,u.name,u.email,u.role FROM login_challenges c JOIN users u ON u.id=c.user_id WHERE c.id=? FOR UPDATE');
+    $stmt = $pdo->prepare('SELECT c.*,u.id AS uid,u.name,u.email,u.role,u.totp_secret_enc,u.totp_enabled FROM login_challenges c JOIN users u ON u.id=c.user_id WHERE c.id=? FOR UPDATE');
     $stmt->execute([$challengeId]); $challenge = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$challenge || $challenge['consumed_at'] !== null || strtotime($challenge['expires_at'] . ' UTC') < time() || (int)$challenge['attempts'] >= 5) {
         $pdo->rollBack(); fail(401, 'Code expired or attempts exceeded. Sign in again for a new code.');
     }
-    $givenHash = hash_hmac('sha256', $code, $config['pepper']);
-    if (!hash_equals($challenge['code_hash'], $givenHash)) {
+    $encryptedSecret = $challenge['purpose'] === 'totp_setup' ? $challenge['pending_totp_secret_enc'] : $challenge['totp_secret_enc'];
+    $secret = $encryptedSecret ? decrypt_totp_secret($encryptedSecret, $config['pepper']) : '';
+    if (!verify_totp($secret, $code)) {
         $pdo->prepare('UPDATE login_challenges SET attempts=attempts+1 WHERE id=?')->execute([$challengeId]);
         $pdo->commit(); fail(401, 'That verification code is incorrect.');
+    }
+    if ($challenge['purpose'] === 'totp_setup') {
+        $pdo->prepare('UPDATE users SET totp_secret_enc=?,totp_enabled=1 WHERE id=?')->execute([$challenge['pending_totp_secret_enc'], $challenge['uid']]);
     }
     $pdo->prepare('UPDATE login_challenges SET consumed_at=UTC_TIMESTAMP() WHERE id=?')->execute([$challengeId]);
     $token = bin2hex(random_bytes(32));
@@ -129,22 +154,109 @@ function require_user(PDO $pdo): array {
     $user['id'] = (int)$user['id']; return $user;
 }
 
-function send_code(array $config, string $email, string $name, string $code): void {
-    if (!$config['smtp_host'] || !$config['smtp_username'] || !$config['smtp_password']) {
-        if (!empty($config['development_log_codes'])) { error_log("Development sign-in code for {$email}: {$code}"); return; }
-        throw new RuntimeException('SMTP is not configured.');
+function start_totp_challenge(PDO $pdo, array $config, array $user): never {
+    $setup = empty($user['totp_enabled']);
+    $secret = $setup ? base32_encode(random_bytes(20)) : null;
+    $pending = $setup ? encrypt_totp_secret($secret, $config['pepper']) : null;
+    $pdo->prepare("INSERT INTO login_challenges (user_id,code_hash,expires_at,purpose,pending_totp_secret_enc) VALUES (?,?,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 10 MINUTE),?,?)")
+        ->execute([$user['id'], hash_hmac('sha256', bin2hex(random_bytes(32)), $config['pepper']), $setup ? 'totp_setup' : 'totp_login', $pending]);
+    $response = ['ok' => true, 'challenge_id' => (int)$pdo->lastInsertId(), 'setup_required' => $setup];
+    if ($setup) {
+        $label = rawurlencode('Cocoa Field Station:' . $user['email']);
+        $response['secret'] = $secret;
+        $response['otpauth_uri'] = 'otpauth://totp/' . $label . '?secret=' . $secret . '&issuer=Cocoa%20Field%20Station&algorithm=SHA1&digits=6&period=30';
     }
-    $autoload = __DIR__ . '/vendor/autoload.php';
-    if (!is_file($autoload)) throw new RuntimeException('Install PHPMailer using Composer.');
-    require_once $autoload;
-    $mail = new PHPMailer\PHPMailer\PHPMailer(true);
-    $mail->isSMTP(); $mail->Host = $config['smtp_host']; $mail->SMTPAuth = true;
-    $mail->Username = $config['smtp_username']; $mail->Password = $config['smtp_password'];
-    $mail->SMTPSecure = $config['smtp_encryption'] === 'ssl' ? PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS : PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
-    $mail->Port = (int)$config['smtp_port']; $mail->setFrom($config['mail_from'], 'Cocoa Field Station');
-    $mail->addAddress($email, $name); $mail->isHTML(false); $mail->Subject = 'Your Cocoa Field Station verification code';
-    $mail->Body = "Your sign-in code is {$code}. It expires in 10 minutes. If you did not request this code, ignore this email.";
-    $mail->send();
+    echo json_encode($response); exit;
+}
+
+function base32_encode(string $data): string {
+    $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; $bits = '';
+    foreach (str_split($data) as $char) $bits .= str_pad(decbin(ord($char)), 8, '0', STR_PAD_LEFT);
+    $out = ''; foreach (str_split($bits, 5) as $chunk) $out .= $alphabet[bindec(str_pad($chunk, 5, '0'))];
+    return $out;
+}
+
+function base32_decode(string $value): string {
+    $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; $bits = '';
+    foreach (str_split(strtoupper(rtrim($value, '='))) as $char) { $n = strpos($alphabet, $char); if ($n === false) throw new RuntimeException('Invalid secret'); $bits .= str_pad(decbin($n), 5, '0', STR_PAD_LEFT); }
+    $out = ''; foreach (str_split($bits, 8) as $byte) if (strlen($byte) === 8) $out .= chr(bindec($byte));
+    return $out;
+}
+
+function verify_totp(string $secret, string $code): bool {
+    if ($secret === '' || !preg_match('/^\d{6}$/', $code)) return false;
+    $key = base32_decode($secret); $counter = (int)floor(time() / 30);
+    for ($offset = -1; $offset <= 1; $offset++) {
+        $binary = pack('N2', 0, $counter + $offset); $hash = hash_hmac('sha1', $binary, $key, true); $index = ord($hash[19]) & 0x0f;
+        $value = ((ord($hash[$index]) & 0x7f) << 24) | ((ord($hash[$index + 1]) & 0xff) << 16) | ((ord($hash[$index + 2]) & 0xff) << 8) | (ord($hash[$index + 3]) & 0xff);
+        if (hash_equals(str_pad((string)($value % 1000000), 6, '0', STR_PAD_LEFT), $code)) return true;
+    }
+    return false;
+}
+
+function totp_key(string $pepper): string { return hash('sha256', 'cocoa-field-station:totp:' . $pepper, true); }
+function encrypt_totp_secret(string $secret, string $pepper): string {
+    $iv = random_bytes(12); $tag = ''; $cipher = openssl_encrypt($secret, 'aes-256-gcm', totp_key($pepper), OPENSSL_RAW_DATA, $iv, $tag);
+    if ($cipher === false) throw new RuntimeException('Encryption failed'); return base64_encode($iv . $tag . $cipher);
+}
+function decrypt_totp_secret(string $stored, string $pepper): string {
+    $raw = base64_decode($stored, true); if ($raw === false || strlen($raw) < 29) return '';
+    $plain = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', totp_key($pepper), OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
+    return $plain === false ? '' : $plain;
+}
+
+function verify_google_id_token(string $token, array $config): object {
+    $clientIds = array_values(array_filter([$config['google_web_client_id'] ?? '', $config['google_android_client_id'] ?? '', $config['google_ios_client_id'] ?? '']));
+    if (!$clientIds) throw new RuntimeException('Google OAuth clients not configured.');
+    $cacheFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'cocoa-google-jwks.json';
+    $jwks = is_file($cacheFile) && filemtime($cacheFile) > time() - 3600 ? json_decode((string)file_get_contents($cacheFile), true) : null;
+    if (!$jwks) {
+        $ctx = stream_context_create(['http' => ['timeout' => 5, 'header' => "Accept: application/json\r\n"]]);
+        $raw = @file_get_contents('https://www.googleapis.com/oauth2/v3/certs', false, $ctx);
+        $jwks = $raw ? json_decode($raw, true) : null;
+        if (!is_array($jwks)) throw new RuntimeException('Google verification keys unavailable.');
+        @file_put_contents($cacheFile, json_encode($jwks), LOCK_EX);
+    }
+    $parts = explode('.', $token);
+    if (count($parts) !== 3) throw new RuntimeException('Malformed Google token.');
+    $header = json_decode(base64url_decode($parts[0]), true);
+    $claimsArray = json_decode(base64url_decode($parts[1]), true);
+    $signature = base64url_decode($parts[2]);
+    if (!is_array($header) || ($header['alg'] ?? '') !== 'RS256' || !is_array($claimsArray)) throw new RuntimeException('Invalid Google token format.');
+    $jwk = null;
+    foreach (($jwks['keys'] ?? []) as $candidate) if (($candidate['kid'] ?? '') === ($header['kid'] ?? '') && ($candidate['kty'] ?? '') === 'RSA') { $jwk = $candidate; break; }
+    if (!$jwk) throw new RuntimeException('Google signing key not recognized.');
+    $key = openssl_pkey_get_public(rsa_jwk_pem($jwk));
+    if (!$key || openssl_verify($parts[0] . '.' . $parts[1], $signature, $key, OPENSSL_ALGO_SHA256) !== 1) throw new RuntimeException('Google token signature invalid.');
+    $audiences = (array)($claimsArray['aud'] ?? []);
+    if (!array_intersect($clientIds, $audiences) || !in_array($claimsArray['iss'] ?? '', ['accounts.google.com', 'https://accounts.google.com'], true) || ($claimsArray['exp'] ?? 0) < time() || ($claimsArray['iat'] ?? PHP_INT_MAX) > time() + 60) throw new RuntimeException('Invalid Google token claims.');
+    $claims = (object)$claimsArray;
+    return $claims;
+}
+
+function base64url_decode(string $value): string {
+    $decoded = base64_decode(strtr($value, '-_', '+/') . str_repeat('=', (4 - strlen($value) % 4) % 4), true);
+    if ($decoded === false) throw new RuntimeException('Invalid base64url value.');
+    return $decoded;
+}
+
+function der_length(int $length): string {
+    if ($length < 128) return chr($length);
+    $bytes = ''; while ($length > 0) { $bytes = chr($length & 0xff) . $bytes; $length >>= 8; }
+    return chr(0x80 | strlen($bytes)) . $bytes;
+}
+function der_element(int $tag, string $data): string { return chr($tag) . der_length(strlen($data)) . $data; }
+function der_integer(string $value): string {
+    $value = ltrim($value, "\0"); if ($value === '' || (ord($value[0]) & 0x80)) $value = "\0" . $value;
+    return der_element(0x02, $value);
+}
+function rsa_jwk_pem(array $jwk): string {
+    $modulus = base64url_decode((string)($jwk['n'] ?? '')); $exponent = base64url_decode((string)($jwk['e'] ?? ''));
+    if ($modulus === '' || $exponent === '') throw new RuntimeException('Invalid Google RSA key.');
+    $rsa = der_element(0x30, der_integer($modulus) . der_integer($exponent));
+    $algorithm = hex2bin('300d06092a864886f70d0101010500');
+    $spki = der_element(0x30, $algorithm . der_element(0x03, "\0" . $rsa));
+    return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
 }
 
 function fail(int $status, string $message): never {

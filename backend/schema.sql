@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(254) NOT NULL UNIQUE,
     password_hash VARCHAR(512) NOT NULL,
     role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
+    google_sub VARCHAR(255) NULL UNIQUE,
+    totp_secret_enc TEXT NULL,
+    totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -17,6 +20,8 @@ CREATE TABLE IF NOT EXISTS login_challenges (
     expires_at DATETIME NOT NULL,
     attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
     consumed_at DATETIME NULL,
+    purpose ENUM('totp_setup', 'totp_login') NOT NULL DEFAULT 'totp_login',
+    pending_totp_secret_enc TEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_login_challenge_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     INDEX idx_challenge_user (user_id, created_at)

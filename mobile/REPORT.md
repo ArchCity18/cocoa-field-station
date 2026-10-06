@@ -1,48 +1,49 @@
-# Information Security Assignment Report
+﻿# Information Security Assignment Report
 
 ## Objective
 
-Build a mobile application that demonstrates user identification, two-factor authentication, role-based authorization for two roles, and salted password storage, using Expo with a local server/database stack.
+Build a mobile application demonstrating user identification, two-factor authentication, role-based authorization for user and admin, and salted password storage, using Expo with a local server and database.
 
 ## System design
 
-The Expo React Native client is the presentation layer. It communicates with a PHP JSON API hosted by Apache in XAMPP. MySQL stores users, one-time-code challenges, and revocable API-token hashes. The server is trusted: it validates input, checks credentials, issues and consumes verification codes, creates sessions, and enforces role permissions for every protected route. The app stores only the opaque session token in device SecureStore; passwords and one-time codes are never persisted on-device.
+The Expo React Native client communicates with a PHP JSON API hosted by Apache in XAMPP. MySQL stores accounts, short-lived authentication challenges, and hashed API session tokens. The server validates credentials, verifies time-based one-time passwords, issues sessions, validates Google ID tokens, and enforces role permissions. The mobile app stores only an opaque session token in Expo SecureStore.
 
-### User identification
+## User identification and Google sign-in
 
-Registration requires a name, unique email address, and a password. Email is normalized to lowercase and stored as the account identifier. Database queries use PDO prepared statements. Registration always assigns the least-privileged `user` role; an `admin` must be promoted by a trusted operator.
+Password accounts are identified by normalized email. The optional Continue with Google flow sends Google's ID token to the PHP API. The API verifies its RS256 signature against Google's published keys and checks issuer, audience, expiry, and verified email. The stable Google subject identifies linked Google accounts. Registration through either method receives only the user role. Existing password accounts are not silently linked by matching email.
 
-### Two-factor authentication
+## Two-factor authentication
 
-After the password check, the server generates a cryptographically random six-digit code, stores only an HMAC-SHA256 digest with a ten-minute expiry, and sends the code to the registered email through SMTP. Verification allows at most five attempts and the challenge is consumed once. On success, the server issues a random 256-bit bearer token with a twelve-hour expiry and stores only its SHA-256 digest. Logout revokes the token. SMTP credentials are kept in the ignored local `backend/config.php`.
+After password or Google identification, the API starts a ten-minute TOTP challenge. New accounts receive a random authenticator secret and an otpauth URI, shown as a QR code with a manual setup key. The user scans this using Google Authenticator or another TOTP app, then confirms a six-digit code. Later sign-ins require a current TOTP code. Verification follows RFC 6238 with a small clock-skew window, allows at most five failed attempts, and consumes a successful challenge once.
 
-For classroom operation without configured SMTP, a development-only mode writes the code to Apache's error log. This mode is disabled by default and must not be used on a public server.
+The TOTP secret is encrypted using AES-256-GCM with a key derived from the private server pepper before it is stored in MySQL. Codes are never stored. After verification, the server generates a random 256-bit bearer token, stores only its SHA-256 digest, and returns the token to the client. Tokens expire after twelve hours; logout revokes them.
 
-### Authorization and roles
+## Authorization and roles
 
-The two roles are **user** and **admin**. Both can use the field summary; only `admin` can use the account directory. Role checks happen inside each PHP route after the token is validated, so hiding a screen in React Native cannot grant access. Public registration cannot choose a role. The initial trusted admin is promoted out-of-band through local database administration.
+The roles are user and admin. Both can use the field summary; only admin can open the account directory. Role checks happen in PHP after validating each token, so hiding a client screen cannot grant access. Public registration cannot assign admin. A trusted operator promotes the designated demonstration account out-of-band through local database administration.
 
-### Salted password storage
+## Salted password storage
 
-PHP `password_hash` with `PASSWORD_ARGON2ID` creates a unique random salt for each password and performs a deliberately expensive password hash. The encoded salt, algorithm, and work parameters are stored with the hash in `users.password_hash`; no plaintext password is stored. A server-side pepper in private configuration is appended before hashing. Login uses `password_verify`, which reads the encoded per-user salt/parameters. Database compromise alone therefore does not reveal the original passwords, though secrets and database access still require protection.
+PHP password_hash with PASSWORD_ARGON2ID creates a unique random salt for each password. The encoded salt, algorithm, and work parameters are stored with the hash in users.password_hash; plaintext passwords are never stored. A private server-side pepper is appended before hashing.
 
 ## Implementation files
 
-- `mobile/src/App.js`: responsive sign-in, account creation, verification, user home, and admin directory screens.
-- `mobile/src/api.js`: API client and opaque token persistence in Expo SecureStore.
-- `backend/api.php`: registration, login, email challenge, verification, logout, session lookup, and role-protected routes.
-- `backend/schema.sql`: MySQL users, challenges, and token tables.
-- `backend/config.example.php`: sample local DB, SMTP, and pepper configuration. The real `config.php` must remain private.
+- mobile/src/App.js: registration, password and Google sign-in, TOTP enrollment, user home, and admin directory.
+- mobile/src/api.js: API client and session token persistence using Expo SecureStore.
+- backend/api.php: registration, password and Google login, TOTP verification, token sessions, and role-protected routes.
+- backend/schema.sql: MySQL account, challenge, and token tables.
+- backend/migrations/002_google_totp.sql: schema update for an existing database.
+- backend/config.example.php: sample local database, pepper, and OAuth client ID configuration. Keep the real config.php private.
 
-## How to run and demonstrate
+## Demonstration
 
-1. Import `backend/schema.sql` in XAMPP phpMyAdmin and run Apache and MySQL.
-2. Configure private `backend/config.php`; configure SMTP for actual delivery, or use the development-only Apache-log code setting in a private local environment.
-3. Set the Expo API URL to the XAMPP computer address, run `npm install` and `npm start` in `mobile/`, and open in Expo Go.
-4. Register a `user`, sign in, and complete the emailed code step.
-5. Promote a trusted second account to `admin` using the documented SQL, sign in, and demonstrate the directory. Call the admin route with a `user` token to observe the server-side `403` denial.
-6. Inspect the database: password values are Argon2id encoded hashes, challenges contain digests rather than codes, and sessions contain token digests rather than bearer tokens.
+1. Import backend/schema.sql in phpMyAdmin, configure the private backend/config.php, and start XAMPP Apache and MySQL.
+2. Register a user, sign in, scan the QR code in Google Authenticator, and enter the displayed code.
+3. Sign out and sign in again to demonstrate the authenticator challenge.
+4. Register or sign in with Google after configuring the OAuth web client; that account also completes TOTP enrollment and verification.
+5. Promote a trusted account to admin in phpMyAdmin and demonstrate its account directory. Use a user token against the admin route to show the server returns 403.
+6. Inspect MySQL to confirm passwords and session tokens are stored as hashes and TOTP secrets are encrypted.
 
-## Security limitations and next improvements
+## Limitations
 
-This is a local coursework prototype, not a production identity platform. Its local XAMPP deployment uses HTTP; public deployments must use HTTPS, restrict CORS, add request throttling and audit events, protect administrator promotion, and use a managed secret store. Email OTP is weaker than TOTP or passkeys and depends on securing the email account. Session tokens use Expo SecureStore. Password reset, account recovery, device/session management, backup, privacy retention, and automated security testing are outside this assignment prototype. Development log-code mode must remain disabled outside an isolated classroom machine.
+This local coursework prototype uses HTTP and wildcard CORS for local development. A public deployment needs HTTPS, restricted CORS, request throttling, protected admin provisioning, secure secret management, backups, and a reviewed account recovery process. Expo Go cannot finish native Google OAuth; use a development build with Android/iOS OAuth clients. If the server pepper is lost, encrypted TOTP secrets cannot be decrypted and users must reenroll.
