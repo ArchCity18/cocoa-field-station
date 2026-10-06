@@ -8,7 +8,7 @@ The app includes a deterministic mock recommender so the demo works without an A
 
 ## Information Security mobile assignment
 
-The mobile assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). Follow [`mobile/README.md`](mobile/README.md) to run the API with XAMPP and launch the Expo client. It demonstrates account registration and identification by email or Google, Google Authenticator TOTP two-factor authentication, server-enforced `user` and `admin` authorization, and password hashing with a unique Argon2id salt plus a server-side pepper. The PHP API is the authority for authentication and authorization; the mobile UI is not a security boundary. The report and implementation walkthrough are in [`mobile/REPORT.md`](mobile/REPORT.md).
+The Expo assignment implementation is in [`mobile/`](mobile/) with a PHP/MySQL API in [`backend/`](backend/). It demonstrates account registration and identification by email or Google, Google Authenticator TOTP two-factor authentication, server-enforced `user` and `admin` authorization, and Argon2id password hashes with salts and a pepper. The Streamlit app also uses Google sign-in followed by TOTP before opening the field workspace. Streamlit Community Cloud uses its own SQLite account-factor records; it does not share the local XAMPP account database. See [`mobile/README.md`](mobile/README.md) and [`mobile/REPORT.md`](mobile/REPORT.md) for the Expo assignment.
 
 ## Setup
 
@@ -24,7 +24,7 @@ streamlit run app.py
 
 ## Configure sign-in
 
-Sign-in requires a Google OAuth client. Create a Google OAuth web client with `http://localhost:8501/oauth2callback` as an authorized redirect URI. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, then replace the client ID, client secret, and cookie secret. Keep `secrets.toml` private; it is excluded by `.gitignore`. For a deployed app, set the redirect URI to the public app URL ending in `/oauth2callback` and register the same URI with Google.
+Sign-in requires a Google OAuth client. Create a Google OAuth web client with `http://localhost:8501/oauth2callback` as an authorized redirect URI. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, then replace the client ID, client secret, and cookie secret. Keep `secrets.toml` private; it is excluded by `.gitignore`. For a deployed app, set the redirect URI to the public app URL ending in `/oauth2callback` and register the same URI with Google. After Google sign-in, users enroll in Google Authenticator; future Streamlit sessions require a six-digit TOTP code. Keep the `[auth].cookie_secret` stable because it also encrypts authenticator secrets stored in the app database. Optionally set `ADMIN_EMAILS = ["admin@example.com"]` in Streamlit Secrets to mark designated accounts as admins.
 
 ## Deploy on Streamlit Community Cloud
 

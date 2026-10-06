@@ -1,11 +1,13 @@
 """Interactive field-station interface for the simulated cocoa decision demo."""
 import json
 from pathlib import Path
+import time
 
 import pandas as pd
 import streamlit as st
 
 import db
+import totp
 from agent import create_and_log_recommendation
 from data.seed import PLOTS, generate_seed_data
 
@@ -82,7 +84,7 @@ def show_authentication():
     """Render the configured identity-provider entry point."""
     st.badge("SECURE SIGN-IN", icon=":material/verified_user:", color="green")
     st.title("Welcome to your field station")
-    st.write("Sign in to continue, or create an account through the identity provider.")
+    st.write("Sign in with Google, then confirm your identity with your authenticator app.")
     sign_in_or_up = st.segmented_control(
         "Choose an account option", ["Sign in", "Create account"],
         default="Sign in", key="auth_mode",
@@ -100,7 +102,7 @@ def show_authentication():
             if sign_in_or_up == "Create account":
                 st.write("Continue to Google to sign in. You can create a Google account in Google's sign-in flow if you need one.")
             else:
-                st.write("Your password stays with Google; this app never asks for it.")
+                st.write("Your password stays with Google. This app never asks for it.")
             if google_config:
                 if st.button("Continue with Google", type="primary", icon=":material/login:"):
                     st.login("google")
@@ -109,6 +111,7 @@ def show_authentication():
                     "Google sign-in is not configured yet. Add OAuth details to `.streamlit/secrets.toml`; setup steps are in the README.",
                     icon=":material/settings:",
                 )
+            st.caption("The first sign-in asks you to connect Google Authenticator. Future sign-ins require a current six-digit code.")
     with right:
         with st.container(border=True):
             st.subheader("Private by design", icon=":material/lock:")
@@ -120,14 +123,119 @@ def show_authentication():
         st.rerun()
 
 
+def clear_mfa_state():
+    for key in ("mfa_subject", "mfa_verified_sub", "mfa_pending_secret", "mfa_pending_sub", "mfa_started_at", "mfa_attempts", "auth_role"):
+        st.session_state.pop(key, None)
+
+
+def require_authenticator():
+    """Gate protected Streamlit pages behind an enrolled TOTP factor."""
+    identity = st.user
+    sub = str(identity.get("sub", "")).strip()
+    email = str(identity.get("email", "")).strip().lower()
+    name = str(identity.get("name", "")).strip() or email
+    if not sub or not email:
+        st.error("Google did not provide a verified account identity. Sign out and try again.")
+        if st.button("Sign out", key="mfa_identity_signout"):
+            clear_mfa_state()
+            st.logout()
+        return False
+
+    if st.session_state.get("mfa_subject") != sub:
+        clear_mfa_state()
+        st.session_state.mfa_subject = sub
+        st.session_state.mfa_started_at = time.time()
+        st.session_state.mfa_attempts = 0
+
+    if st.session_state.get("mfa_verified_sub") == sub:
+        return True
+
+    auth_config = st.secrets.get("auth", {})
+    cookie_secret = str(auth_config.get("cookie_secret", ""))
+    if len(cookie_secret) < 32:
+        st.error("Authenticator storage is not configured. Add a long random cookie_secret under [auth] in Streamlit Secrets.")
+        return False
+
+    admin_emails = st.secrets.get("ADMIN_EMAILS", [])
+    is_admin = email in {str(item).strip().lower() for item in admin_emails}
+    account = db.get_or_create_auth_account(sub, email, name, is_admin=is_admin)
+    st.session_state.auth_role = account["role"]
+
+    now = time.time()
+    if now - st.session_state.mfa_started_at > 600:
+        st.error("This authenticator challenge expired. Sign out and start again.")
+        if st.button("Restart sign-in", key="mfa_expired_signout"):
+            clear_mfa_state()
+            st.logout()
+        return False
+    if st.session_state.mfa_attempts >= 5:
+        st.error("Too many incorrect authenticator codes. Sign out and start again.")
+        if st.button("Restart sign-in", key="mfa_locked_signout"):
+            clear_mfa_state()
+            st.logout()
+        return False
+
+    enrolled = bool(account.get("totp_secret_enc"))
+    if enrolled:
+        try:
+            secret = totp.decrypt_secret(account["totp_secret_enc"], cookie_secret)
+        except Exception:
+            st.error("The saved authenticator key cannot be opened. Check that your Streamlit cookie_secret has not changed.")
+            return False
+        st.badge("SECOND STEP", icon=":material/verified_user:", color="green")
+        st.title("Check your authenticator")
+        st.write("Enter the current six-digit code from Google Authenticator.")
+    else:
+        pending_sub = st.session_state.get("mfa_pending_sub")
+        if pending_sub != sub or not st.session_state.get("mfa_pending_secret"):
+            st.session_state.mfa_pending_sub = sub
+            st.session_state.mfa_pending_secret = totp.new_secret()
+        secret = st.session_state.mfa_pending_secret
+        uri = totp.provisioning_uri(secret, email)
+        st.badge("SET UP TWO-STEP VERIFICATION", icon=":material/verified_user:", color="green")
+        st.title("Connect Google Authenticator")
+        st.write("Scan this QR code in Google Authenticator, then enter the code it creates to finish setup.")
+        qr_col, key_col = st.columns([1, 1], vertical_alignment="center")
+        with qr_col:
+            st.image(totp.qr_image(uri), caption="Scan with Google Authenticator")
+        with key_col:
+            st.markdown("**Manual setup key**")
+            st.code(secret, language=None)
+            st.caption("Keep this key private. It can generate sign-in codes for your account.")
+
+    with st.form("authenticator-code-form"):
+        code = st.text_input("Six-digit code", max_chars=6, placeholder="000000", autocomplete="one-time-code")
+        submitted = st.form_submit_button("Verify and continue", type="primary", icon=":material/lock_open:", width="stretch")
+    if submitted:
+        if totp.verify_code(secret, code):
+            if not enrolled:
+                db.set_totp_secret(sub, totp.encrypt_secret(secret, cookie_secret))
+            st.session_state.mfa_verified_sub = sub
+            st.session_state.pop("mfa_pending_secret", None)
+            st.session_state.pop("mfa_pending_sub", None)
+            st.session_state.mfa_attempts = 0
+            st.rerun()
+        st.session_state.mfa_attempts += 1
+        st.error(f"That code is incorrect. Attempts remaining: {5 - st.session_state.mfa_attempts}.")
+    st.caption(f"Signed in with Google as {email}. The code challenge expires after ten minutes.")
+    if st.button("Sign out", key="mfa_signout", icon=":material/logout:"):
+        clear_mfa_state()
+        st.logout()
+    return False
+
+
 def show_sidebar():
     with st.sidebar:
         if LOGO.exists():
             st.logo(str(LOGO), size="large")
         st.caption("COCOA FIELD STATION")
         st.markdown("### Your workspace")
+        role = st.session_state.get("auth_role", "user")
+        views = ["Plot monitor", "Decision journal"] + (["Account directory"] if role == "admin" else [])
+        if st.session_state.get("workspace_view") not in views:
+            st.session_state.workspace_view = views[0]
         st.radio(
-            "Workspace", ["Plot monitor", "Decision journal"],
+            "Workspace", views,
             key="workspace_view", label_visibility="collapsed",
             horizontal=False,
         )
@@ -135,9 +243,26 @@ def show_sidebar():
         st.caption("ACCOUNT")
         name = st.user.get("name") or st.user.get("email") or "Signed in"
         st.caption(name)
+        st.caption(f"ROLE · {st.session_state.get('auth_role', 'user').upper()}")
         if st.button("Sign out", icon=":material/logout:", width="stretch"):
+            clear_mfa_state()
             st.logout()
         st.caption("SIMULATED DATA · NOT FARM ADVICE")
+
+
+def show_account_directory():
+    if st.session_state.get("auth_role") != "admin":
+        st.error("Admin role required.")
+        st.stop()
+    st.caption("ADMINISTRATION  /  ACCOUNTS")
+    st.title("Account directory", icon=":material/manage_accounts:")
+    st.write("Google identities registered in this Streamlit app, with authenticator enrollment status.")
+    records = pd.DataFrame(db.auth_accounts())
+    if records.empty:
+        st.info("No accounts have completed sign-in yet.")
+    else:
+        records = records.rename(columns={"email": "Email", "name": "Name", "role": "Role", "created_at": "Created", "authenticator": "Authenticator"})
+        st.dataframe(records, hide_index=True, width="stretch")
 
 
 def show_plot_picker():
@@ -312,7 +437,11 @@ if not st.session_state.started:
     st.stop()
 
 if not st.user.get("is_logged_in", False):
+    clear_mfa_state()
     show_authentication()
+    st.stop()
+
+if not require_authenticator():
     st.stop()
 
 show_sidebar()
@@ -320,5 +449,7 @@ st.space("small")
 if st.session_state.workspace_view == "Plot monitor":
     show_plot_picker()
     show_plot_monitor(st.session_state.selected_plot)
-else:
+elif st.session_state.workspace_view == "Decision journal":
     show_journal()
+else:
+    show_account_directory()

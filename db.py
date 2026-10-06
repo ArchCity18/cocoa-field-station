@@ -27,7 +27,38 @@ def init_db():
           risk_bucket TEXT NOT NULL, recommendation TEXT NOT NULL, rationale TEXT NOT NULL,
           evidence_json TEXT NOT NULL, confidence REAL NOT NULL, gated INTEGER NOT NULL,
           human_decision TEXT, human_reason TEXT, cited_case_ids TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS auth_accounts (
+          google_sub TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user', totp_secret_enc TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         """)
+
+
+def get_or_create_auth_account(google_sub, email, name, is_admin=False):
+    role = "admin" if is_admin else "user"
+    with connect() as db:
+        row = db.execute("SELECT * FROM auth_accounts WHERE google_sub=?", (google_sub,)).fetchone()
+        if row is None:
+            db.execute("INSERT INTO auth_accounts (google_sub,email,name,role) VALUES (?,?,?,?)",
+                       (google_sub, email, name, role))
+            row = db.execute("SELECT * FROM auth_accounts WHERE google_sub=?", (google_sub,)).fetchone()
+        else:
+            db.execute("UPDATE auth_accounts SET email=?,name=?,role=? WHERE google_sub=?",
+                       (email, name, role, google_sub))
+            row = db.execute("SELECT * FROM auth_accounts WHERE google_sub=?", (google_sub,)).fetchone()
+        return dict(row)
+
+
+def set_totp_secret(google_sub, encrypted_secret):
+    with connect() as db:
+        db.execute("UPDATE auth_accounts SET totp_secret_enc=? WHERE google_sub=?",
+                   (encrypted_secret, google_sub))
+
+
+def auth_accounts():
+    with connect() as db:
+        rows = db.execute("SELECT email,name,role,created_at,CASE WHEN totp_secret_enc IS NULL THEN 'Not enrolled' ELSE 'Enrolled' END AS authenticator FROM auth_accounts ORDER BY created_at DESC").fetchall()
+    return [dict(row) for row in rows]
 
 
 def seed_weather(rows):
