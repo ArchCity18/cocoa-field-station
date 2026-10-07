@@ -14,7 +14,7 @@ SET @has_is_active = (
 );
 SET @add_is_active = IF(@has_is_active=0,
     'ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER role',
-    'SELECT 1');
+    'DO 0');
 PREPARE stmt FROM @add_is_active; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS field_plots (
@@ -44,7 +44,7 @@ SET @has_entered_by = (
 );
 SET @add_entered_by = IF(@has_entered_by=0,
     'ALTER TABLE field_weather ADD COLUMN entered_by BIGINT UNSIGNED NULL',
-    'SELECT 1');
+    'DO 0');
 PREPARE stmt FROM @add_entered_by; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @has_weather_user_fk = (
@@ -54,7 +54,7 @@ SET @has_weather_user_fk = (
 );
 SET @add_weather_user_fk = IF(@has_weather_user_fk=0,
     'ALTER TABLE field_weather ADD CONSTRAINT fk_field_weather_user FOREIGN KEY (entered_by) REFERENCES users(id) ON DELETE SET NULL',
-    'SELECT 1');
+    'DO 0');
 PREPARE stmt FROM @add_weather_user_fk; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS field_decisions (
