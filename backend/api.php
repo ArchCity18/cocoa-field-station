@@ -5,15 +5,22 @@ session_start();
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
-header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
+header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
 
 $configPath = __DIR__ . '/config.php';
 if (!is_file($configPath)) { fail(500, 'Server setup incomplete. Copy config.example.php to config.php.'); }
 $config = require $configPath;
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+$allowedOrigins = $config['allowed_origins'] ?? [];
+if ($origin !== '' && in_array($origin, $allowedOrigins, true)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Vary: Origin');
+}
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    if ($origin !== '' && !in_array($origin, $allowedOrigins, true)) { http_response_code(403); exit; }
+    http_response_code(204); exit;
+}
 try {
     $pdo = new PDO(
         sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $config['db_host'], $config['db_name']),
@@ -22,7 +29,7 @@ try {
     );
 } catch (Throwable $e) { fail(500, 'Database unavailable. Check XAMPP MySQL and backend configuration.'); }
 
-ensure_field_workspace($pdo);
+seed_field_workspace($pdo);
 
 $path = isset($_GET['route']) ? '/' . trim((string)$_GET['route'], '/') : (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 $apiPrefix = '/cocoa-security/api.php';
@@ -44,13 +51,14 @@ if ($method === 'POST' && $path === '/register') {
     $name = trim((string)($body['name'] ?? ''));
     $email = strtolower(trim((string)($body['email'] ?? '')));
     $password = (string)($body['password'] ?? '');
-    if (mb_strlen($name) < 2 || mb_strlen($name) > 120) { fail(422, 'Enter a name between 2 and 120 characters.'); }
+    if (mb_strlen($name) < 2 || mb_strlen($name) > 120 || !preg_match('/^[\p{L}\p{M} .\'-]+$/u', $name)) { fail(422, 'Enter a valid name between 2 and 120 characters.'); }
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { fail(422, 'Enter a valid email address.'); }
-    if (strlen($password) < 10 || strlen($password) > 1024) { fail(422, 'Use a password between 10 and 1024 characters.'); }
+    if (strlen($password) < 12 || strlen($password) > 1024) { fail(422, 'Use a password between 12 and 1024 characters.'); }
     $hash = password_hash($password . $config['pepper'], PASSWORD_ARGON2ID);
     try {
-        $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,'user')");
+        $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,'inputer')");
         $stmt->execute([$name, $email, $hash]);
+        $pdo->prepare('DELETE FROM inputer_invites WHERE email=?')->execute([$email]);
     } catch (PDOException $e) {
         if ($e->getCode() === '23000') { fail(409, 'An account with that email already exists.'); }
         fail(500, 'Could not create the account.');
@@ -61,7 +69,7 @@ if ($method === 'POST' && $path === '/register') {
 if ($method === 'POST' && $path === '/login') {
     $email = strtolower(trim((string)($body['email'] ?? '')));
     $password = (string)($body['password'] ?? '');
-    $stmt = $pdo->prepare('SELECT id,name,email,password_hash,role,totp_enabled FROM users WHERE email=?');
+    $stmt = $pdo->prepare('SELECT id,name,email,password_hash,role,totp_enabled FROM users WHERE email=? AND is_active=1');
     $stmt->execute([$email]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$user || !password_verify($password . $config['pepper'], $user['password_hash'])) { fail(401, 'Email or password is incorrect.'); }
     start_totp_challenge($pdo, $config, $user);
@@ -75,15 +83,16 @@ if ($method === 'POST' && $path === '/google-login') {
     $sub = (string)($claims->sub ?? ''); $email = strtolower((string)($claims->email ?? ''));
     $name = trim((string)($claims->name ?? 'Google user'));
     if ($sub === '' || $email === '' || empty($claims->email_verified)) { fail(401, 'Google did not provide a verified account.'); }
-    $stmt = $pdo->prepare('SELECT id,name,email,role,totp_enabled FROM users WHERE google_sub=?');
+    $stmt = $pdo->prepare('SELECT id,name,email,role,totp_enabled FROM users WHERE google_sub=? AND is_active=1');
     $stmt->execute([$sub]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$user) {
         $stmt = $pdo->prepare('SELECT id FROM users WHERE email=?'); $stmt->execute([$email]);
         if ($stmt->fetchColumn()) { fail(409, 'This email already has a password account. Sign in with its password first.'); }
         try {
-            $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role,google_sub) VALUES (?,?,?,'user',?)");
+            $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role,google_sub) VALUES (?,?,?,'inputer',?)");
             $stmt->execute([$name !== '' ? mb_substr($name, 0, 120) : 'Google user', $email, password_hash(bin2hex(random_bytes(32)) . $config['pepper'], PASSWORD_ARGON2ID), $sub]);
-            $user = ['id' => (int)$pdo->lastInsertId(), 'name' => $name, 'email' => $email, 'role' => 'user', 'totp_enabled' => 0];
+            $pdo->prepare('DELETE FROM inputer_invites WHERE email=?')->execute([$email]);
+            $user = ['id' => (int)$pdo->lastInsertId(), 'name' => $name, 'email' => $email, 'role' => 'inputer', 'totp_enabled' => 0];
         } catch (PDOException $e) { fail(409, 'That Google account could not be linked.'); }
     }
     start_totp_challenge($pdo, $config, $user);
@@ -129,9 +138,44 @@ if ($method === 'POST' && $path === '/logout') {
 
 if ($method === 'GET' && $path === '/admin/users') {
     $user = require_user($pdo);
-    if ($user['role'] !== 'admin') { fail(403, 'Admin role required.'); }
-    $users = $pdo->query('SELECT id,name,email,role,created_at FROM users ORDER BY created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
-    echo json_encode(['ok' => true, 'users' => $users]); exit;
+    require_role($user, ['manager','admin','administrator']);
+    $users = $pdo->query('SELECT id,name,email,role,is_active,created_at FROM users ORDER BY created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($users as &$account) { $account['is_active'] = (bool)$account['is_active']; }
+    unset($account);
+    $invites = $pdo->query('SELECT email,name,invited_by,created_at FROM inputer_invites ORDER BY created_at DESC')->fetchAll(PDO::FETCH_ASSOC);
+    echo json_encode(['ok' => true, 'users' => $users, 'invites' => $invites]); exit;
+}
+
+if ($method === 'POST' && $path === '/admin/inputers') {
+    $user = require_user($pdo);
+    require_role($user, ['manager','administrator']);
+    $name = trim((string)($body['name'] ?? '')); $email = strtolower(trim((string)($body['email'] ?? '')));
+    if (mb_strlen($name) < 2 || mb_strlen($name) > 120) { fail(422, 'Enter a name between 2 and 120 characters.'); }
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { fail(422, 'Enter a valid email address.'); }
+    $stmt = $pdo->prepare('SELECT 1 FROM users WHERE email=?'); $stmt->execute([$email]);
+    if ($stmt->fetchColumn()) { fail(409, 'An account with that email already exists.'); }
+    try {
+        $stmt = $pdo->prepare('INSERT INTO inputer_invites(email,name,invited_by) VALUES(?,?,?)');
+        $stmt->execute([$email,$name,$user['id']]);
+    } catch (PDOException $e) { if ($e->getCode() === '23000') fail(409, 'An invitation for that email already exists.'); fail(500, 'Could not add the inputer.'); }
+    echo json_encode(['ok' => true, 'message' => 'Inputer added. They can register using this Google/email address.']); exit;
+}
+
+if ($method === 'DELETE' && $path === '/admin/inputers') {
+    $user = require_user($pdo);
+    require_role($user, ['admin','administrator']);
+    $email = strtolower(trim((string)($body['email'] ?? '')));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { fail(422, 'Choose a valid inputer email.'); }
+    $pdo->beginTransaction();
+    $stmt = $pdo->prepare("UPDATE users SET is_active=0 WHERE email=? AND role='inputer' AND is_active=1"); $stmt->execute([$email]);
+    $deleted = $stmt->rowCount() > 0;
+    if ($deleted) {
+        $stmt = $pdo->prepare('DELETE FROM api_tokens WHERE user_id=(SELECT id FROM users WHERE email=?)'); $stmt->execute([$email]);
+    }
+    if (!$deleted) { $stmt = $pdo->prepare('DELETE FROM inputer_invites WHERE email=?'); $stmt->execute([$email]); $deleted = $stmt->rowCount() > 0; }
+    $pdo->commit();
+    if (!$deleted) { fail(404, 'No inputer account or invitation matched that email.'); }
+    echo json_encode(['ok' => true]); exit;
 }
 
 if ($method === 'GET' && $path === '/field/plots') {
@@ -147,7 +191,7 @@ if ($method === 'GET' && $path === '/field/plot') {
     $stmt = $pdo->prepare('SELECT plot_id,description FROM field_plots WHERE plot_id=?');
     $stmt->execute([$plotId]); $plot = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$plot) { fail(404, 'Plot not found.'); }
-    $stmt = $pdo->prepare('SELECT observation_date AS date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note FROM field_weather WHERE plot_id=? ORDER BY observation_date DESC LIMIT ?');
+    $stmt = $pdo->prepare('SELECT w.observation_date AS date,w.rainfall_mm,w.humidity_pct,w.temp_c,w.days_since_last_spray,w.inspection_note,u.email AS entered_by FROM field_weather w LEFT JOIN users u ON u.id=w.entered_by WHERE w.plot_id=? ORDER BY w.observation_date DESC LIMIT ?');
     $stmt->bindValue(1, $plotId); $stmt->bindValue(2, $days, PDO::PARAM_INT); $stmt->execute();
     $observations = array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
     foreach ($observations as &$row) { foreach (['rainfall_mm','humidity_pct','temp_c'] as $key) $row[$key] = (float)$row[$key]; $row['days_since_last_spray'] = (int)$row['days_since_last_spray']; }
@@ -166,6 +210,27 @@ if ($method === 'POST' && $path === '/field/recommendation') {
     $plotId = trim((string)($body['plot_id'] ?? ''));
     $result = create_field_recommendation($pdo, (int)$user['id'], $plotId);
     echo json_encode(['ok' => true, 'recommendation' => $result]); exit;
+}
+
+if ($method === 'POST' && $path === '/field/observation') {
+    $user = require_user($pdo);
+    require_role($user, ['inputer','manager','administrator']);
+    $plotId = trim((string)($body['plot_id'] ?? '')); $date = trim((string)($body['date'] ?? ''));
+    $rain = filter_var($body['rainfall_mm'] ?? null, FILTER_VALIDATE_FLOAT);
+    $humidity = filter_var($body['humidity_pct'] ?? null, FILTER_VALIDATE_FLOAT);
+    $temperature = filter_var($body['temp_c'] ?? null, FILTER_VALIDATE_FLOAT);
+    $daysSince = filter_var($body['days_since_last_spray'] ?? null, FILTER_VALIDATE_INT);
+    $note = trim((string)($body['inspection_note'] ?? ''));
+    $dateObject = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+    if (!$dateObject || $dateObject->format('Y-m-d') !== $date || $date > gmdate('Y-m-d')) { fail(422, 'Enter a valid observation date that is not in the future.'); }
+    if ($rain === false || $rain < 0 || $rain > 1000 || $humidity === false || $humidity < 0 || $humidity > 100 || $temperature === false || $temperature < -20 || $temperature > 60 || $daysSince === false || $daysSince < 0 || $daysSince > 3650 || mb_strlen($note) > 500) { fail(422, 'Check the rainfall, humidity, temperature, spray interval, and note values.'); }
+    $stmt = $pdo->prepare('SELECT 1 FROM field_plots WHERE plot_id=?'); $stmt->execute([$plotId]);
+    if (!$stmt->fetchColumn()) { fail(404, 'Choose a valid plot.'); }
+    try {
+        $stmt = $pdo->prepare('INSERT INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note,entered_by) VALUES(?,?,?,?,?,?,?,?)');
+        $stmt->execute([$plotId,$date,$rain,$humidity,$temperature,$daysSince,$note !== '' ? mb_substr($note,0,500) : null,$user['id']]);
+    } catch (PDOException $e) { if ($e->getCode() === '23000') fail(409, 'An observation already exists for this plot and date.'); fail(500, 'Could not save the observation.'); }
+    echo json_encode(['ok' => true]); exit;
 }
 
 if ($method === 'POST' && $path === '/field/decision') {
@@ -205,10 +270,7 @@ if ($method === 'GET' && $path === '/field/summary') {
     echo json_encode(['ok' => true, 'message' => 'User workspace', 'signed_in_as' => $user['name'], 'account_count' => $total]); exit;
 }
 
-function ensure_field_workspace(PDO $pdo): void {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS field_plots (plot_id VARCHAR(40) PRIMARY KEY,description VARCHAR(200) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $pdo->exec("CREATE TABLE IF NOT EXISTS field_weather (plot_id VARCHAR(40) NOT NULL,observation_date DATE NOT NULL,rainfall_mm DECIMAL(7,2) NOT NULL,humidity_pct DECIMAL(5,2) NOT NULL,temp_c DECIMAL(5,2) NOT NULL,days_since_last_spray INT NOT NULL,inspection_note VARCHAR(500) NULL,PRIMARY KEY(plot_id,observation_date),CONSTRAINT fk_field_weather_plot FOREIGN KEY(plot_id) REFERENCES field_plots(plot_id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $pdo->exec("CREATE TABLE IF NOT EXISTS field_decisions (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,user_id BIGINT UNSIGNED NOT NULL,plot_id VARCHAR(40) NOT NULL,created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,risk_bucket ENUM('low','medium','high') NOT NULL,recommendation ENUM('spray','wait','inspect') NOT NULL,rationale TEXT NOT NULL,evidence_json JSON NOT NULL,confidence DECIMAL(4,3) NOT NULL,gated TINYINT(1) NOT NULL DEFAULT 0,human_decision ENUM('spray','wait','inspect') NULL,human_reason VARCHAR(1000) NULL,CONSTRAINT fk_field_decision_user FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,CONSTRAINT fk_field_decision_plot FOREIGN KEY(plot_id) REFERENCES field_plots(plot_id),INDEX idx_field_decision_plot_date(plot_id,created_at),INDEX idx_field_decision_user_date(user_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+function seed_field_workspace(PDO $pdo): void {
     $plots = ['Plot A' => 'Rising rain and humidity', 'Plot B' => 'Recent gaps in observations', 'Plot C' => 'Middle-range conditions'];
     $insertPlot = $pdo->prepare('INSERT IGNORE INTO field_plots(plot_id,description) VALUES(?,?)');
     foreach ($plots as $id => $description) $insertPlot->execute([$id,$description]);
@@ -254,10 +316,14 @@ function bearer_token(): ?string {
 
 function require_user(PDO $pdo): array {
     $token = bearer_token(); if (!$token) fail(401, 'Sign in required.');
-    $stmt = $pdo->prepare('SELECT u.id,u.name,u.email,u.role FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.expires_at>UTC_TIMESTAMP()');
+    $stmt = $pdo->prepare('SELECT u.id,u.name,u.email,u.role FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.expires_at>UTC_TIMESTAMP() AND u.is_active=1');
     $stmt->execute([hash('sha256', $token)]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$user) fail(401, 'Session expired. Sign in again.');
     $user['id'] = (int)$user['id']; return $user;
+}
+
+function require_role(array $user, array $roles): void {
+    if (!in_array($user['role'] ?? '', $roles, true)) { fail(403, 'Your role is not allowed to perform this action.'); }
 }
 
 function start_totp_challenge(PDO $pdo, array $config, array $user): never {

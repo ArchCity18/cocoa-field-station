@@ -1,7 +1,9 @@
 """Interactive field-station interface for the simulated cocoa decision demo."""
 import json
 from pathlib import Path
+import sqlite3
 import time
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -162,6 +164,14 @@ def require_authenticator():
         st.session_state.mfa_attempts = 0
 
     if st.session_state.get("mfa_verified_sub") == sub:
+        account = db.auth_account(sub)
+        if not account:
+            st.error("This account has been removed from the field station.")
+            if st.button("Sign out", key="disabled_account_signout"):
+                clear_mfa_state()
+                st.logout()
+            return False
+        st.session_state.auth_role = account["role"]
         return True
 
     auth_config = st.secrets.get("auth", {})
@@ -170,9 +180,25 @@ def require_authenticator():
         st.error("Authenticator storage is not configured. Add a long random cookie_secret under [auth] in Streamlit Secrets.")
         return False
 
-    admin_emails = st.secrets.get("ADMIN_EMAILS", [])
-    is_admin = email in {str(item).strip().lower() for item in admin_emails}
-    account = db.get_or_create_auth_account(sub, email, name, is_admin=is_admin)
+    def email_set(value):
+        if isinstance(value, str):
+            value = value.split(",")
+        return {str(item).strip().lower() for item in value if str(item).strip()}
+
+    bootstrap_role = "inputer"
+    if email in email_set(st.secrets.get("ADMINISTRATOR_EMAILS", [])):
+        bootstrap_role = "administrator"
+    elif email in email_set(st.secrets.get("ADMIN_EMAILS", [])):
+        bootstrap_role = "admin"
+    elif email in email_set(st.secrets.get("MANAGER_EMAILS", [])):
+        bootstrap_role = "manager"
+    account = db.get_or_create_auth_account(sub, email, name, bootstrap_role=bootstrap_role)
+    if not account:
+        st.error("This account has been removed from the field station. Contact a manager if access should be restored.")
+        if st.button("Sign out", key="blocked_account_signout"):
+            clear_mfa_state()
+            st.logout()
+        return False
     st.session_state.auth_role = account["role"]
 
     now = time.time()
@@ -257,7 +283,7 @@ def show_sidebar():
         st.caption("COCOA FIELD STATION")
         st.markdown("### Your workspace")
         role = st.session_state.get("auth_role", "user")
-        views = ["Plot monitor", "Decision journal"] + (["Account directory"] if role == "admin" else [])
+        views = ["Plot monitor", "Decision journal"] + (["Account directory"] if role in {"manager", "admin", "administrator"} else [])
         if st.session_state.get("workspace_view") not in views:
             st.session_state.workspace_view = views[0]
         st.radio(
@@ -277,12 +303,57 @@ def show_sidebar():
 
 
 def show_account_directory():
-    if st.session_state.get("auth_role") != "admin":
-        st.error("Admin role required.")
+    role = st.session_state.get("auth_role")
+    if role not in {"manager", "admin", "administrator"}:
+        st.error("Manager, admin, or administrator role required.")
         st.stop()
-    st.caption("ADMINISTRATION  /  ACCOUNTS")
+    st.caption("ROLE MANAGEMENT  /  ACCOUNTS")
     st.title("Account directory", icon=":material/manage_accounts:")
-    st.write("Google identities registered in this Streamlit app, with authenticator enrollment status.")
+    st.write("Managers can add inputers. Admins can remove inputers. Administrators can do both.")
+    can_add = role in {"manager", "administrator"}
+    can_delete = role in {"admin", "administrator"}
+    if can_add:
+        st.subheader("Add an inputer")
+        with st.form("add_inputer_form", clear_on_submit=True):
+            invite_name = st.text_input("Inputer name")
+            invite_email = st.text_input("Google account email", placeholder="inputer@example.com")
+            invited = st.form_submit_button("Add inputer", type="primary", icon=":material/person_add:")
+        if invited:
+            if len(invite_name.strip()) < 2 or "@" not in invite_email:
+                st.error("Enter the inputer's name and a valid email address.")
+            else:
+                ok, message = db.create_inputer_invite(invite_email, invite_name, st.user.get("email", ""))
+                (st.success if ok else st.error)(message)
+    records = db.auth_accounts()
+    invites = db.inputer_invites()
+    visible_records = [{key: value for key, value in row.items() if key != "google_sub"} for row in records]
+    st.subheader("Registered accounts")
+    if visible_records:
+        frame = pd.DataFrame(visible_records).rename(columns={"email": "Email", "name": "Name", "role": "Role", "created_at": "Created", "authenticator": "Authenticator"})
+        st.dataframe(frame, hide_index=True, width="stretch")
+    else:
+        st.info("No accounts have completed sign-in yet.")
+    if invites:
+        st.subheader("Pending inputer invitations")
+        frame = pd.DataFrame(invites).rename(columns={"email": "Email", "name": "Name", "invited_by": "Added by", "created_at": "Created"})
+        st.dataframe(frame, hide_index=True, width="stretch")
+    if can_delete:
+        targets = [(row["google_sub"], row["email"], row["name"], "registered account") for row in records if row["role"] == "inputer"]
+        targets += [(None, row["email"], row["name"], "pending invitation") for row in invites]
+        if targets:
+            with st.form("delete_inputer_form"):
+                target = st.selectbox("Inputer to remove", targets, format_func=lambda item: f"{item[2]} · {item[1]} ({item[3]})")
+                confirmed = st.checkbox("I confirm this inputer's access should be removed")
+                deleted = st.form_submit_button("Delete inputer", type="secondary", icon=":material/person_remove:")
+            if deleted:
+                if not confirmed:
+                    st.error("Confirm the removal before continuing.")
+                else:
+                    done = (db.delete_inputer_account(target[0]) if target[0] else False) or db.delete_inputer_invite(target[1])
+                    if done:
+                        st.success(f"Removed inputer access for {target[1]}.")
+                        st.rerun()
+                    st.error("The selected inputer was not found or no longer has inputer access.")
     records = pd.DataFrame(db.auth_accounts())
     if records.empty:
         st.info("No accounts have completed sign-in yet.")
@@ -345,8 +416,8 @@ def show_plot_monitor(plot_id):
             window = frame.tail(days)
             st.line_chart(window, x="date", y=value_col, y_label=label, alt=alt)
             with st.expander("View observation journal", icon=":material/notes:"):
-                display = window[["date", "rainfall_mm", "humidity_pct", "temp_c", "days_since_last_spray", "inspection_note"]].copy()
-                display.columns = ["Date", "Rain (mm)", "Humidity (%)", "Temperature (°C)", "Days since spray", "Inspection note"]
+                display = window[["date", "rainfall_mm", "humidity_pct", "temp_c", "days_since_last_spray", "inspection_note", "entered_by"]].copy()
+                display.columns = ["Date", "Rain (mm)", "Humidity (%)", "Temperature (°C)", "Days since spray", "Inspection note", "Entered by"]
                 st.dataframe(display, hide_index=True, width="stretch", alt="Weather observations and inspection notes for this plot")
 
     with right:
@@ -407,6 +478,41 @@ def show_plot_monitor(plot_id):
                     with st.spinner("Reviewing recent conditions…"):
                         st.session_state.current_recommendation = create_and_log_recommendation(plot_id)
                     st.rerun()
+    if st.session_state.get("auth_role") in {"inputer", "manager", "administrator"}:
+        st.space("small")
+        with st.container(border=True):
+            st.subheader("Enter a field observation", icon=":material/edit_note:")
+            st.caption("Inputers, managers, and administrators can add a dated reading. Existing plot data is not overwritten.")
+            with st.form(f"field_observation_{plot_id}", clear_on_submit=True):
+                date_col, rain_col, humidity_col = st.columns(3)
+                with date_col:
+                    observed_on = st.date_input("Observation date")
+                with rain_col:
+                    rainfall = st.number_input("Rainfall (mm)", min_value=0.0, max_value=1000.0, value=0.0, step=0.5)
+                with humidity_col:
+                    humidity = st.number_input("Humidity (%)", min_value=0.0, max_value=100.0, value=70.0, step=1.0)
+                temp_col, spray_col = st.columns(2)
+                with temp_col:
+                    temperature = st.number_input("Temperature (°C)", min_value=-20.0, max_value=60.0, value=25.0, step=0.5)
+                with spray_col:
+                    days_since_spray = st.number_input("Days since last spray", min_value=0, max_value=3650, value=14, step=1)
+                note = st.text_input("Inspection note (optional)", max_chars=500)
+                submitted = st.form_submit_button("Save observation", type="primary", icon=":material/save:")
+            if submitted:
+                if observed_on > date.today():
+                    st.error("The observation date cannot be in the future.")
+                else:
+                    try:
+                        db.add_weather_observation(plot_id, {
+                            "date": observed_on.isoformat(), "rainfall_mm": rainfall,
+                            "humidity_pct": humidity, "temp_c": temperature,
+                            "days_since_last_spray": days_since_spray, "inspection_note": note.strip(),
+                        }, st.user.get("email", ""))
+                    except sqlite3.IntegrityError:
+                        st.error("An observation already exists for this plot and date.")
+                    else:
+                        st.success("Observation saved to the local field database.")
+                        st.rerun()
     st.caption("Prototype only · Weather is simulated · Agronomy thresholds are unverified placeholders")
 
 

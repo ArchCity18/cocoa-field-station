@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(120) NOT NULL,
     email VARCHAR(254) NOT NULL UNIQUE,
     password_hash VARCHAR(512) NOT NULL,
-    role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
+    role ENUM('inputer', 'admin', 'administrator', 'manager') NOT NULL DEFAULT 'inputer',
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
     google_sub VARCHAR(255) NULL UNIQUE,
     totp_secret_enc TEXT NULL,
     totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
@@ -50,8 +51,10 @@ CREATE TABLE IF NOT EXISTS field_weather (
     temp_c DECIMAL(5,2) NOT NULL,
     days_since_last_spray INT NOT NULL,
     inspection_note VARCHAR(500) NULL,
+    entered_by BIGINT UNSIGNED NULL,
     PRIMARY KEY (plot_id, observation_date),
-    CONSTRAINT fk_field_weather_plot FOREIGN KEY (plot_id) REFERENCES field_plots(plot_id) ON DELETE CASCADE
+    CONSTRAINT fk_field_weather_plot FOREIGN KEY (plot_id) REFERENCES field_plots(plot_id) ON DELETE CASCADE,
+    CONSTRAINT fk_field_weather_user FOREIGN KEY (entered_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS field_decisions (
@@ -73,5 +76,14 @@ CREATE TABLE IF NOT EXISTS field_decisions (
     INDEX idx_field_decision_user_date (user_id, created_at)
 );
 
--- Grant admin only to a trusted account through SQL after registration.
--- Example: UPDATE users SET role='admin' WHERE email='admin@example.com';
+CREATE TABLE IF NOT EXISTS inputer_invites (
+    email VARCHAR(254) NOT NULL PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    invited_by BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_invite_manager FOREIGN KEY (invited_by) REFERENCES users(id)
+);
+
+-- Provision elevated roles only for trusted accounts after registration.
+-- Example: UPDATE users SET role='administrator' WHERE email='owner@example.com';
+-- The role enum is: inputer, manager, admin, administrator.
