@@ -24,6 +24,7 @@ export default function App() {
   const [form, setForm] = useState({ name: '', email: '', password: '', code: '' });
   const [challenge, setChallenge] = useState(null);
   const [oauth, setOauth] = useState({});
+  const [nativeGoogleReady, setNativeGoogleReady] = useState(false);
   const [user, setUser] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,14 +36,33 @@ export default function App() {
     scopes: ['openid', 'profile', 'email'],
   }, { scheme: 'cocoa-field-station-mobile' });
 
-  useEffect(() => { request('/public-config').then(setOauth).catch(() => {}); }, []);
+  useEffect(() => {
+    request('/public-config').then((config) => {
+      setOauth(config);
+      if (Platform.OS === 'android' && config.google_web_client_id) {
+        try {
+          const { GoogleOneTapSignIn } = require('react-native-nitro-google-signin');
+          GoogleOneTapSignIn.configure({ webClientId: config.google_web_client_id, scopes: ['email'] });
+          setNativeGoogleReady(true);
+        } catch {
+          setNativeGoogleReady(false);
+        }
+      }
+    }).catch(() => {});
+  }, []);
   useEffect(() => { (async () => { try { const result = await request('/me', { auth: true }); setUser(result.user); setScreen('home'); } catch { await clearToken(); } })(); }, []);
   useEffect(() => {
     if (googleResponse?.type !== 'success') return;
     const idToken = googleResponse.params?.id_token || googleResponse.authentication?.idToken;
     if (!idToken) { setError('Google did not return an ID token. Check the OAuth client settings.'); return; }
-    (async () => { setBusy(true); setError(''); try { const result = await request('/google-login', { method: 'POST', body: { id_token: idToken } }); setChallenge(result); setScreen('totp'); setForm((f) => ({ ...f, code: '' })); } catch (e) { setError(e.message); } finally { setBusy(false); } })();
+    (async () => { setBusy(true); setError(''); try { await finishGoogleToken(idToken); } catch (e) { setError(e.message); } finally { setBusy(false); } })();
   }, [googleResponse]);
+
+  async function finishGoogleToken(idToken) {
+    if (!idToken) throw new Error('Google did not return an ID token. Check the OAuth client settings.');
+    const result = await request('/google-login', { method: 'POST', body: { id_token: idToken } });
+    setChallenge(result); setScreen('totp'); setForm((f) => ({ ...f, code: '' }));
+  }
 
   function change(key, value) { setForm((old) => ({ ...old, [key]: value })); setError(''); }
   async function submit() {
@@ -61,7 +81,24 @@ export default function App() {
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
   async function finishGoogleSignIn() {
-    const nativeClientId = Platform.OS === 'android' ? oauth.google_android_client_id : oauth.google_ios_client_id;
+    if (Platform.OS === 'android') {
+      if (!oauth.google_web_client_id) { setError('Add the Google Web OAuth client ID to the XAMPP config.php first.'); return; }
+      if (!nativeGoogleReady) { setError('Install and open the EAS development build for native Google sign-in.'); return; }
+      setBusy(true); setError('');
+      try {
+        const { GoogleOneTapSignIn, isCancelledResponse, isSuccessResponse } = require('react-native-nitro-google-signin');
+        await GoogleOneTapSignIn.checkPlayServices();
+        const response = await GoogleOneTapSignIn.presentExplicitSignIn();
+        if (isCancelledResponse(response)) return;
+        if (!isSuccessResponse(response) || !response.data.idToken) {
+          throw new Error('Google returned no ID token. Check that the Android OAuth client uses this app package and the EAS SHA-1.');
+        }
+        await finishGoogleToken(response.data.idToken);
+      } catch (e) { setError(e.message || 'Could not open Google sign-in.'); }
+      finally { setBusy(false); }
+      return;
+    }
+    const nativeClientId = oauth.google_ios_client_id;
     if (Platform.OS !== 'web' && !nativeClientId) { setError('Add this platform’s Google OAuth client ID and use an Expo development build for native Google sign-in.'); return; }
     if (Platform.OS === 'web' && !oauth.google_web_client_id) { setError('Google sign-in is not configured yet. Add the Expo web OAuth client ID to the XAMPP config.'); return; }
     try { await promptGoogle(); } catch { setError('Could not open Google sign-in.'); }
@@ -120,7 +157,7 @@ export default function App() {
       {!!error && <View style={s.error}><Feather name="alert-circle" size={16} color={C.error} /><Text style={s.errorText}>{error}</Text></View>}
       <Button title={screen === 'totp' ? setup ? 'Connect and continue' : 'Verify and continue' : mode === 'register' ? 'Create account' : 'Continue securely'} busy={busy} onPress={submit} />
       {screen === 'totp' && <Pressable onPress={() => { setScreen('login'); setChallenge(null); setError(''); }}><Text style={s.back}>Back to sign in</Text></Pressable>}
-      {screen !== 'totp' && mode === 'login' && <><View style={s.divider}><Text style={s.dividerText}>OR</Text></View><Pressable accessibilityRole="button" disabled={!googleRequest || busy} onPress={finishGoogleSignIn} style={s.googleButton}><Text style={s.googleMark}>G</Text><Text style={s.googleText}>Continue with Google</Text></Pressable><Text style={s.googleNote}>Google sign-in also requires your authenticator code.</Text>{!oauth.google_web_client_id && googleRequest?.redirectUri && <Text selectable style={s.googleSetup}>For OAuth setup, register this local redirect URI in Google Cloud: {googleRequest.redirectUri}</Text>}</>}
+      {screen !== 'totp' && mode === 'login' && <><View style={s.divider}><Text style={s.dividerText}>OR</Text></View><Pressable accessibilityRole="button" disabled={!googleRequest || busy} onPress={finishGoogleSignIn} style={s.googleButton}><Text style={s.googleMark}>G</Text><Text style={s.googleText}>Continue with Google</Text></Pressable><Text style={s.googleNote}>Google sign-in also requires your authenticator code.</Text>{Platform.OS === 'web' && googleRequest?.redirectUri && <Text selectable style={s.googleSetup}>Web OAuth redirect URI: {googleRequest.redirectUri}</Text>}</>}
     </View>
     <View style={s.trust}><View style={s.trustItem}><Feather name="shield" size={15} color={C.leaf} /><Text style={s.trustText}>Protected access</Text></View><View style={s.trustItem}><Feather name="key" size={15} color={C.leaf} /><Text style={s.trustText}>Authenticator verification</Text></View></View>
     <Text style={s.footer}>COCOA FIELD STATION · PRIVATE BY DESIGN</Text>

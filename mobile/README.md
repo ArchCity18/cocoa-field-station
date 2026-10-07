@@ -57,9 +57,29 @@ Run `npm run web` for the browser client. The default API URL uses localhost on 
 
 ## Google sign-in and TOTP
 
-For Expo web, create a Google OAuth web client and register the exact redirect URI shown by the app; configure its web client ID in the private XAMPP `config.php`. No Google client secret belongs in the Expo bundle. The PHP API verifies Google's signed ID token and verified email. Native Android/iOS OAuth requires platform OAuth clients and an Expo development build; Expo Go does not provide the native OAuth callback setup.
+For Expo web, create a Google OAuth web client and register the exact web redirect URI shown under the sign-in button; configure its web client ID in the private XAMPP `config.php`. No Google client secret belongs in the Expo bundle. Android uses native Google Credential Manager via `react-native-nitro-google-signin`, not an OAuth browser redirect. Create Android and Web OAuth clients in the same Google project; the Android client uses this app's package and EAS SHA-1, while the native library receives the Web client ID. Do not add a `package:/oauthredirect` URI for Android: Google no longer supports custom-scheme OAuth redirects on Android. The PHP API verifies Google's signed ID token and verified email. Native Google sign-in requires the EAS development build; Expo Go does not include its native module.
 
 Email/password registration identifies users by normalized email. The first successful login starts TOTP enrollment: scan the QR/manual key using Google Authenticator or another compatible authenticator, then enter a six-digit code. Subsequent logins require a current code. Challenges expire after ten minutes and allow five failed attempts. TOTP secrets are encrypted before storage, and session tokens are stored as SHA-256 digests and expire after twelve hours.
+
+### Android native Google sign-in with EAS
+
+Expo Go cannot complete the native Google sign-in flow. The `eas.json` development profile builds an installable Android development app in Expo's cloud, so Eclipse/Android Studio and a local Java install are not needed.
+
+From PowerShell:
+
+```powershell
+cd C:\Users\Archilles\Documents\Hackathon\mobile
+npx.cmd eas-cli login
+npx.cmd eas-cli build --platform android --profile development
+```
+
+Sign in to your Expo account when prompted. On the first build, let EAS generate and manage the Android keystore. When the build finishes, install its APK on your phone. Then get the signing fingerprint:
+
+```powershell
+npx.cmd eas-cli credentials --platform android
+```
+
+Choose the development build profile and view the Android keystore details; copy the **SHA-1 fingerprint**. In Google Cloud, create an **Android OAuth client** with package name `org.cocoafieldstation.mobile` and that SHA-1. Make sure a **Web OAuth client** also exists in that same Google project. Add the Android client ID as `google_android_client_id` and the Web client ID as `google_web_client_id` in the effective XAMPP config at `C:\xampp\htdocs\cocoa-security\config.php` (not the Streamlit secrets file). Keep the keystore and its passwords private. Rebuild the app after native package changes, install the new APK, then start Expo with `npx.cmd expo start --dev-client` and open the development build on the phone.
 
 ## Assign elevated roles
 
