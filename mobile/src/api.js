@@ -1,8 +1,9 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-// For a physical phone, replace with your computer's LAN IP address.
-const HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
+// Set EXPO_PUBLIC_API_HOST in mobile/.env to your computer's LAN IP for phones.
+// Without an override, Android emulators use their special host alias.
+const HOST = process.env.EXPO_PUBLIC_API_HOST || (Platform.OS === 'android' ? '10.0.2.2' : 'localhost');
 export const API_URL = `http://${HOST}/cocoa-security/api.php`;
 const TOKEN_KEY = 'cocoa_session_token';
 

@@ -53,7 +53,7 @@ npm install
 npm start
 ```
 
-Run `npm run web` for the browser client. The API URL in `src/api.js` is configured for the local browser and Android emulator. For a physical phone, use the computer's LAN IP in that file and allow Apache through Windows Firewall on a private network. Keep the phone and computer on the same trusted Wi-Fi.
+Run `npm run web` for the browser client. The default API URL uses localhost on web and the Android emulator's `10.0.2.2` host alias on Android emulators. For a physical phone, create `mobile/.env` with `EXPO_PUBLIC_API_HOST=YOUR_COMPUTER_LAN_IP` (for example, `10.43.21.185`) and allow Apache through Windows Firewall on a private network. Keep the phone and computer on the same trusted Wi-Fi. After changing `.env`, stop Expo and restart with `npx expo start -c` so it reloads the host value.
 
 ## Google sign-in and TOTP
 
