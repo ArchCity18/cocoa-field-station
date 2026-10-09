@@ -8,7 +8,7 @@ The app includes a deterministic mock recommender so the demo works without an A
 
 ## Information Security mobile assignment
 
-The Streamlit app uses Google OpenID Connect for identity and Google Authenticator TOTP as a second factor. The Expo assignment in [`mobile/`](mobile/) uses a React Native client and PHP/MySQL API in [`backend/`](backend/); it supports email/password or Google identity, TOTP, Argon2id password hashes with per-password salts and a private pepper, and four server-checked roles. Both applications can add plot observations and retain the entering user's identity. Streamlit stores its own records in SQLite; Expo uses the local XAMPP MySQL database. They do not share accounts or data. See [`mobile/README.md`](mobile/README.md) and the two-page paper in [`docs/Secure_Login_System_Implementation_Report.docx`](docs/Secure_Login_System_Implementation_Report.docx).
+The Streamlit app uses Google OpenID Connect for identity and Google Authenticator TOTP as a second factor. The Expo assignment in [`mobile/`](mobile/) uses a React Native client and PHP API in [`backend/`](backend/); it supports email/password or Google identity, TOTP, Argon2id password hashes with per-password salts and a private pepper, and four server-checked roles. Local development still works with SQLite and XAMPP MySQL. For the shared cloud setup, both server backends use Supabase PostgreSQL: plot observations and decisions are shared, while the two apps retain their separate sign-in records. See [`backend/supabase_schema.sql`](backend/supabase_schema.sql), [`mobile/README.md`](mobile/README.md), and the two-page paper in [`docs/Secure_Login_System_Implementation_Report.docx`](docs/Secure_Login_System_Implementation_Report.docx).
 
 ## Setup
 
@@ -48,7 +48,17 @@ The endpoint should support `POST {LLM_BASE_URL}/chat/completions` and return an
 
 The local SQLite database is suitable for a prototype demo and is not configured as durable shared storage for a hosted production app.
 
-The **Create account** option sends users to Google's sign-in flow, where they can create a Google account if needed. This prototype does not create a separate Cocoa account. It stores plot and decision data in one shared local SQLite database, so sign-in does not yet provide per-user data isolation.
+## Shared Supabase database
+
+1. In the Supabase project, open **SQL Editor**, create a new query, paste the contents of [`backend/supabase_schema.sql`](backend/supabase_schema.sql), and run it once. The script creates the app tables, seeds the three plot names, enables row-level security, and denies direct table access to browser/mobile API roles.
+2. In **Project → Connect**, choose **Session pooler** and copy the PostgreSQL connection URI. Keep its database password private. The URI is used only by server code; never put it in `mobile/.env` or an Expo build.
+3. In local `.streamlit/secrets.toml` and Streamlit Community Cloud **Settings → Secrets**, add `COCOA_DATABASE_URL = "the-private-session-pooler-uri"`.
+4. For the PHP API, copy the Supabase host, port, database, username, and password from that connection URI into the private `backend/config.php`. Set `db_driver` to `pgsql`, `db_name` to `postgres`, and keep `db_dsn` empty or set a `pgsql:...;sslmode=require` DSN. The PHP host must have PDO_PGSQL enabled. The example config is a template; do not commit the real config.
+5. XAMPP can continue to serve the PHP API for local phone testing, but your computer and Apache must remain on. The Expo app connects to that API; Supabase holds the shared records. To use Expo away from your local network, the PHP API itself must also be deployed to a public HTTPS host.
+
+The SQL schema enables RLS and gives no direct table permissions to `anon` or `authenticated`. The server-side database credentials bypass those client policies and therefore must remain private. Server endpoints continue to authorize roles and use parameterized statements. Configure the cloud URI only after running the schema, then restart/reboot the corresponding app.
+
+The **Create account** option sends users to Google's sign-in flow, where they can create a Google account if needed. This prototype does not create a separate Cocoa account for the Streamlit client. Streamlit and Expo retain separate account tables, while plot observations and decisions can be shared through the Supabase setup above. Shared records are visible to authenticated field-station users; they are not partitioned per user.
 
 The app creates `cocoa.db` on first run and seeds 30 days of simulated weather for three plots. Set `COCOA_DB_PATH` to change the database location. Use `pytest` to run the unit tests.
 

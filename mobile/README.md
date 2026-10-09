@@ -1,6 +1,6 @@
 # Cocoa Field Station — Expo security assignment
 
-This Expo React Native application and PHP/MySQL API demonstrate user identification, two-factor authentication, four role permissions, salted and peppered password hashing, a local XAMPP server, and an offline-capable local database. The Streamlit application has a separate Google OIDC/TOTP sign-in and SQLite database; neither app shares accounts or data with the other.
+This Expo React Native application and PHP API demonstrate user identification, two-factor authentication, four role permissions, salted and peppered password hashing, and local XAMPP development. The Streamlit application has a separate Google OIDC/TOTP sign-in. Both backends can use the same Supabase PostgreSQL database for shared plot observations and decisions; account records remain separate.
 
 ## Requirement checklist
 
@@ -42,6 +42,14 @@ Removing an Expo inputer deactivates the account and revokes its API sessions. T
 5. Copy `backend/config.example.php` to `C:\xampp\htdocs\cocoa-security\backend\config.php`. Set its database password to the same value, generate a long random `pepper`, and keep the file private. It must never be committed.
 6. Make sure `allowed_origins` includes the exact Expo web origin you use (normally `http://localhost:8081` or `http://127.0.0.1:8081`). Native requests do not send a browser origin. Keep the API on localhost or a trusted private network.
 7. Visit `http://localhost/cocoa-security/api.php?route=health`. The response should be JSON with `ok: true`.
+
+### Use the shared Supabase database
+
+1. In the Supabase project, open **SQL Editor**, paste the complete [`backend/supabase_schema.sql`](../backend/supabase_schema.sql) file, and click **Run** once.
+2. Choose **Connect → Session pooler** and copy its PostgreSQL URI. Do not send the URI or database password in chat or commit it.
+3. Set `COCOA_DATABASE_URL` to that URI in local `.streamlit/secrets.toml` and in Community Cloud **Settings → Secrets**.
+4. In the private `C:\xampp\htdocs\cocoa-security\backend\config.php`, set `db_driver` to `pgsql`, `db_host`, `db_port`, `db_name`, `db_user`, and `db_password` from the URI. Leave `db_dsn` empty to build a TLS-required PDO PostgreSQL DSN. Enable the PHP `pdo_pgsql` extension in XAMPP if it is disabled, then restart Apache.
+5. The Expo client still calls the PHP API. XAMPP can connect to Supabase during local testing, but it must be running and reachable from the phone. Public use requires deploying the PHP API to an HTTPS host as well.
 
 The API uses PDO with emulated prepares disabled. It performs no schema changes at runtime, so the app database login does not need CREATE, ALTER, or DROP privileges. The local database is not encrypted at rest; protect the computer account and back up the database securely.
 
@@ -99,4 +107,4 @@ For Streamlit, set `MANAGER_EMAILS`, `ADMIN_EMAILS`, and/or `ADMINISTRATOR_EMAIL
 
 PHP's `password_hash(..., PASSWORD_ARGON2ID)` creates a unique random salt and stores its algorithm/cost metadata with each hash; the private server pepper is added before hashing. Passwords and TOTP codes are not stored. Parameterized SQL prevents user input from being interpolated into database statements. Role checks are enforced server-side. Database transport is local TCP for XAMPP; public use requires TLS, restrictive origin configuration, rate limiting, secure backups, secret rotation, and an account recovery plan.
 
-The Streamlit Community Cloud app does not connect to this local MySQL database. Its SQLite file is separate and is not configured as durable shared production storage. Both apps use shared plot data within their own database. Weather rows are example/simulated data, and recommendations are illustrative rather than validated farm advice.
+When the Supabase connection secret is set, both app backends use the shared Supabase database for plot observations and decisions. Without it, Streamlit falls back to its local SQLite file and the PHP API uses the configured XAMPP database. Weather rows are example/simulated data, and recommendations are illustrative rather than validated farm advice.

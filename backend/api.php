@@ -22,12 +22,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204); exit;
 }
 try {
+    $driver = (string)($config['db_driver'] ?? 'mysql');
+    $dsn = trim((string)($config['db_dsn'] ?? ''));
+    if ($dsn === '') {
+        $dsn = $driver === 'pgsql'
+            ? sprintf('pgsql:host=%s;port=%d;dbname=%s;sslmode=require', $config['db_host'], (int)($config['db_port'] ?? 5432), $config['db_name'])
+            : sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $config['db_host'], $config['db_name']);
+    }
     $pdo = new PDO(
-        sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $config['db_host'], $config['db_name']),
+        $dsn,
         $config['db_user'], $config['db_password'],
         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => false]
     );
-} catch (Throwable $e) { fail(500, 'Database unavailable. Check XAMPP MySQL and backend configuration.'); }
+    $isPostgres = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'pgsql';
+} catch (Throwable $e) { fail(500, 'Database unavailable. Check the private database configuration and required PDO driver.'); }
 
 seed_field_workspace($pdo);
 
@@ -60,7 +68,7 @@ if ($method === 'POST' && $path === '/register') {
         $stmt->execute([$name, $email, $hash]);
         $pdo->prepare('DELETE FROM inputer_invites WHERE email=?')->execute([$email]);
     } catch (PDOException $e) {
-        if ($e->getCode() === '23000') { fail(409, 'An account with that email already exists.'); }
+        if (in_array((string)$e->getCode(), ['23000', '23505'], true)) { fail(409, 'An account with that email already exists.'); }
         fail(500, 'Could not create the account.');
     }
     http_response_code(201); echo json_encode(['ok' => true, 'message' => 'Account created. Sign in, then connect your authenticator app.']); exit;
@@ -92,7 +100,8 @@ if ($method === 'POST' && $path === '/google-login') {
             $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role,google_sub) VALUES (?,?,?,'inputer',?)");
             $stmt->execute([$name !== '' ? mb_substr($name, 0, 120) : 'Google user', $email, password_hash(bin2hex(random_bytes(32)) . $config['pepper'], PASSWORD_ARGON2ID), $sub]);
             $pdo->prepare('DELETE FROM inputer_invites WHERE email=?')->execute([$email]);
-            $user = ['id' => (int)$pdo->lastInsertId(), 'name' => $name, 'email' => $email, 'role' => 'inputer', 'totp_enabled' => 0];
+            $newUserId = generated_id($pdo, 'users');
+            $user = ['id' => (int)$newUserId, 'name' => $name, 'email' => $email, 'role' => 'inputer', 'totp_enabled' => 0];
         } catch (PDOException $e) { fail(409, 'That Google account could not be linked.'); }
     }
     start_totp_challenge($pdo, $config, $user);
@@ -117,11 +126,11 @@ if ($method === 'POST' && $path === '/verify-totp') {
     if ($challenge['purpose'] === 'totp_setup') {
         $pdo->prepare('UPDATE users SET totp_secret_enc=?,totp_enabled=1 WHERE id=?')->execute([$challenge['pending_totp_secret_enc'], $challenge['uid']]);
     }
-    $pdo->prepare('UPDATE login_challenges SET consumed_at=UTC_TIMESTAMP() WHERE id=?')->execute([$challengeId]);
+    $pdo->prepare('UPDATE login_challenges SET consumed_at=CURRENT_TIMESTAMP WHERE id=?')->execute([$challengeId]);
     $token = bin2hex(random_bytes(32));
     $tokenHash = hash('sha256', $token);
-    $pdo->prepare('INSERT INTO api_tokens (user_id,token_hash,expires_at) VALUES (?,?,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 12 HOUR))')
-        ->execute([$challenge['uid'], $tokenHash]);
+    $pdo->prepare('INSERT INTO api_tokens (user_id,token_hash,expires_at) VALUES (?,?,?)')
+        ->execute([$challenge['uid'], $tokenHash, gmdate('Y-m-d H:i:s', time() + 43200)]);
     $pdo->commit();
     echo json_encode(['ok' => true, 'token' => $token, 'user' => ['id' => (int)$challenge['uid'], 'name' => $challenge['name'], 'email' => $challenge['email'], 'role' => $challenge['role']]]); exit;
 }
@@ -156,8 +165,8 @@ if ($method === 'POST' && $path === '/admin/inputers') {
     if ($stmt->fetchColumn()) { fail(409, 'An account with that email already exists.'); }
     try {
         $stmt = $pdo->prepare('INSERT INTO inputer_invites(email,name,invited_by) VALUES(?,?,?)');
-        $stmt->execute([$email,$name,$user['id']]);
-    } catch (PDOException $e) { if ($e->getCode() === '23000') fail(409, 'An invitation for that email already exists.'); fail(500, 'Could not add the inputer.'); }
+        $stmt->execute([$email,$name,(string)$user['id']]);
+    } catch (PDOException $e) { if (in_array((string)$e->getCode(), ['23000', '23505'], true)) fail(409, 'An invitation for that email already exists.'); fail(500, 'Could not add the inputer.'); }
     echo json_encode(['ok' => true, 'message' => 'Inputer added. They can register using this Google/email address.']); exit;
 }
 
@@ -191,7 +200,8 @@ if ($method === 'GET' && $path === '/field/plot') {
     $stmt = $pdo->prepare('SELECT plot_id,description FROM field_plots WHERE plot_id=?');
     $stmt->execute([$plotId]); $plot = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$plot) { fail(404, 'Plot not found.'); }
-    $stmt = $pdo->prepare('SELECT w.observation_date AS date,w.rainfall_mm,w.humidity_pct,w.temp_c,w.days_since_last_spray,w.inspection_note,u.email AS entered_by FROM field_weather w LEFT JOIN users u ON u.id=w.entered_by WHERE w.plot_id=? ORDER BY w.observation_date DESC LIMIT ?');
+    $enteredBySql = $isPostgres ? 'COALESCE(w.entered_by_email,u.email)' : 'u.email';
+    $stmt = $pdo->prepare("SELECT w.observation_date AS date,w.rainfall_mm,w.humidity_pct,w.temp_c,w.days_since_last_spray,w.inspection_note,{$enteredBySql} AS entered_by FROM field_weather w LEFT JOIN users u ON u.id=w.entered_by WHERE w.plot_id=? ORDER BY w.observation_date DESC LIMIT ?");
     $stmt->bindValue(1, $plotId); $stmt->bindValue(2, $days, PDO::PARAM_INT); $stmt->execute();
     $observations = array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
     foreach ($observations as &$row) { foreach (['rainfall_mm','humidity_pct','temp_c'] as $key) $row[$key] = (float)$row[$key]; $row['days_since_last_spray'] = (int)$row['days_since_last_spray']; }
@@ -248,11 +258,12 @@ if ($method === 'POST' && $path === '/field/decision') {
     echo json_encode(['ok' => true]); exit;
 }
 
-if ($method === 'GET' && $path === '/field/journal') {
+    if ($method === 'GET' && $path === '/field/journal') {
     require_user($pdo);
     $plotId = trim((string)($_GET['plot_id'] ?? ''));
     $status = (string)($_GET['status'] ?? 'all');
-    $sql = 'SELECT d.id,d.plot_id,d.created_at,d.risk_bucket,d.recommendation,d.rationale,d.evidence_json,d.confidence,d.gated,d.human_decision,d.human_reason,u.name AS grower_name FROM field_decisions d JOIN users u ON u.id=d.user_id WHERE 1=1';
+    $growerNameSql = $isPostgres ? 'COALESCE(u.name,d.entered_by_email)' : 'u.name';
+    $sql = "SELECT d.id,d.plot_id,d.created_at,d.risk_bucket,d.recommendation,d.rationale,d.evidence_json,d.confidence,d.gated,d.human_decision,d.human_reason,{$growerNameSql} AS grower_name FROM field_decisions d LEFT JOIN users u ON u.id=d.user_id WHERE 1=1";
     $params = [];
     if ($plotId !== '' && $plotId !== 'All plots') { $sql .= ' AND d.plot_id=?'; $params[] = $plotId; }
     if ($status === 'pending') $sql .= ' AND d.human_decision IS NULL';
@@ -272,10 +283,15 @@ if ($method === 'GET' && $path === '/field/summary') {
 
 function seed_field_workspace(PDO $pdo): void {
     $plots = ['Plot A' => 'Rising rain and humidity', 'Plot B' => 'Recent gaps in observations', 'Plot C' => 'Middle-range conditions'];
-    $insertPlot = $pdo->prepare('INSERT IGNORE INTO field_plots(plot_id,description) VALUES(?,?)');
+    $isPostgres = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'pgsql';
+    $insertPlot = $pdo->prepare($isPostgres
+        ? 'INSERT INTO field_plots(plot_id,description) VALUES(?,?) ON CONFLICT(plot_id) DO NOTHING'
+        : 'INSERT IGNORE INTO field_plots(plot_id,description) VALUES(?,?)');
     foreach ($plots as $id => $description) $insertPlot->execute([$id,$description]);
     if ((int)$pdo->query('SELECT COUNT(*) FROM field_weather')->fetchColumn() > 0) return;
-    $insertWeather = $pdo->prepare('INSERT IGNORE INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note) VALUES(?,?,?,?,?,?,?)');
+    $insertWeather = $pdo->prepare($isPostgres
+        ? 'INSERT INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(plot_id,observation_date) DO NOTHING'
+        : 'INSERT IGNORE INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note) VALUES(?,?,?,?,?,?,?)');
     foreach ($plots as $plot => $_description) {
         for ($ago = 29; $ago >= 0; $ago--) {
             if ($plot === 'Plot B' && in_array($ago, [1,3,5,6], true)) continue;
@@ -303,7 +319,8 @@ function create_field_recommendation(PDO $pdo, int $userId, string $plotId): arr
     $rationale = 'Rule-based suggestion from simulated plot observations. Thresholds are illustrative placeholders and need agronomy review. A grower must review the evidence and record the decision; the app never acts on the plot.';
     $stmt = $pdo->prepare('INSERT INTO field_decisions(user_id,plot_id,risk_bucket,recommendation,rationale,evidence_json,confidence,gated) VALUES(?,?,?,?,?,?,?,?)');
     $stmt->execute([$userId,$plotId,$bucket,$action,$rationale,json_encode($evidence),$confidence,(int)$gated]);
-    return ['id'=>(int)$pdo->lastInsertId(),'plot_id'=>$plotId,'risk_bucket'=>$bucket,'action'=>$action,'rationale'=>$rationale,'evidence'=>$evidence,'confidence'=>$confidence,'gated'=>$gated,'pending'=>true,'human_decision'=>null,'human_reason'=>null,'ts'=>gmdate(DATE_ATOM)];
+    $decisionId = generated_id($pdo, 'field_decisions');
+    return ['id'=>(int)$decisionId,'plot_id'=>$plotId,'risk_bucket'=>$bucket,'action'=>$action,'rationale'=>$rationale,'evidence'=>$evidence,'confidence'=>$confidence,'gated'=>$gated,'pending'=>true,'human_decision'=>null,'human_reason'=>null,'ts'=>gmdate(DATE_ATOM)];
 }
 
 fail(404, 'Endpoint not found.');
@@ -314,10 +331,25 @@ function bearer_token(): ?string {
     return $match[1];
 }
 
+function generated_id(PDO $pdo, string $table): int {
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'pgsql') {
+        return (int)$pdo->lastInsertId();
+    }
+    $sequences = [
+        'users' => "SELECT currval(pg_get_serial_sequence('public.users', 'id'))",
+        'login_challenges' => "SELECT currval(pg_get_serial_sequence('public.login_challenges', 'id'))",
+        'field_decisions' => "SELECT currval(pg_get_serial_sequence('public.field_decisions', 'id'))",
+    ];
+    if (!isset($sequences[$table])) {
+        throw new InvalidArgumentException('Unknown generated ID table.');
+    }
+    return (int)$pdo->query($sequences[$table])->fetchColumn();
+}
+
 function require_user(PDO $pdo): array {
     $token = bearer_token(); if (!$token) fail(401, 'Sign in required.');
-    $stmt = $pdo->prepare('SELECT u.id,u.name,u.email,u.role FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.expires_at>UTC_TIMESTAMP() AND u.is_active=1');
-    $stmt->execute([hash('sha256', $token)]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt = $pdo->prepare('SELECT u.id,u.name,u.email,u.role FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.expires_at>? AND u.is_active=1');
+    $stmt->execute([hash('sha256', $token), gmdate('Y-m-d H:i:s')]); $user = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$user) fail(401, 'Session expired. Sign in again.');
     $user['id'] = (int)$user['id']; return $user;
 }
@@ -330,9 +362,10 @@ function start_totp_challenge(PDO $pdo, array $config, array $user): never {
     $setup = empty($user['totp_enabled']);
     $secret = $setup ? base32_encode(random_bytes(20)) : null;
     $pending = $setup ? encrypt_totp_secret($secret, $config['pepper']) : null;
-    $pdo->prepare("INSERT INTO login_challenges (user_id,code_hash,expires_at,purpose,pending_totp_secret_enc) VALUES (?,?,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 10 MINUTE),?,?)")
-        ->execute([$user['id'], hash_hmac('sha256', bin2hex(random_bytes(32)), $config['pepper']), $setup ? 'totp_setup' : 'totp_login', $pending]);
-    $response = ['ok' => true, 'challenge_id' => (int)$pdo->lastInsertId(), 'setup_required' => $setup];
+    $stmt = $pdo->prepare('INSERT INTO login_challenges (user_id,code_hash,expires_at,purpose,pending_totp_secret_enc) VALUES (?,?,?,?,?)');
+    $stmt->execute([$user['id'], hash_hmac('sha256', bin2hex(random_bytes(32)), $config['pepper']), gmdate('Y-m-d H:i:s', time() + 600), $setup ? 'totp_setup' : 'totp_login', $pending]);
+    $challengeId = generated_id($pdo, 'login_challenges');
+    $response = ['ok' => true, 'challenge_id' => (int)$challengeId, 'setup_required' => $setup];
     if ($setup) {
         $label = rawurlencode('Cocoa Field Station:' . $user['email']);
         $response['secret'] = $secret;

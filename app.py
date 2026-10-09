@@ -1,7 +1,6 @@
 """Interactive field-station interface for the simulated cocoa decision demo."""
 import json
 from pathlib import Path
-import sqlite3
 import time
 from datetime import date
 
@@ -508,10 +507,10 @@ def show_plot_monitor(plot_id):
                             "humidity_pct": humidity, "temp_c": temperature,
                             "days_since_last_spray": days_since_spray, "inspection_note": note.strip(),
                         }, st.user.get("email", ""))
-                    except sqlite3.IntegrityError:
+                    except db.INTEGRITY_ERRORS:
                         st.error("An observation already exists for this plot and date.")
                     else:
-                        st.success("Observation saved to the local field database.")
+                        st.success("Observation saved to the field database.")
                         st.rerun()
     st.caption("Prototype only · Weather is simulated · Agronomy thresholds are unverified placeholders")
 
@@ -538,7 +537,10 @@ def show_journal():
             "Confidence": row["confidence"], "Gate": "Inspect" if row["gated"] else "Clear",
             "Human decision": (row["human_decision"] or "Awaiting review").title(),
             "Reason": row["human_reason"] or "—",
-            "Evidence": "; ".join(json.loads(row["evidence_json"])),
+            "Evidence": "; ".join(
+                row["evidence_json"] if isinstance(row["evidence_json"], list)
+                else json.loads(row["evidence_json"])
+            ),
         })
     journal = pd.DataFrame(records)
     filters = st.columns([1, 1, 2], vertical_alignment="bottom")
