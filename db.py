@@ -61,7 +61,8 @@ def _executemany(db, sql, rows):
     if isinstance(db, sqlite3.Connection):
         return db.executemany(sql, rows)
     sql = re.sub(r":([A-Za-z_][A-Za-z0-9_]*)", r"%(\1)s", sql)
-    return db.executemany(sql.replace("?", "%s"), rows)
+    # psycopg 3 exposes batch execution on cursors, not Connection objects.
+    return db.cursor().executemany(sql.replace("?", "%s"), rows)
 
 
 def _table_exists(db, table):
