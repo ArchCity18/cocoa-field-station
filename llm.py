@@ -66,9 +66,16 @@ def recommend(payload):
     # An incomplete hosted-model setup should still leave the demo usable.
     if mock_enabled or not base or not model:
         return _validate(_mock(payload))
-    prompt = "Return JSON only with action (spray|wait|inspect), rationale, evidence (array), cited_case_ids (array). Never invent case IDs.\n" + json.dumps(payload, default=_json_default)
+    prompt = (
+        "Return one compact JSON object with exactly these fields: action "
+        "(spray, wait, or inspect), rationale (short string), evidence "
+        "(array of short strings), cited_case_ids (array). Never invent case IDs. "
+        "Do not use markdown or add text outside the JSON object.\n"
+        + json.dumps(payload, default=_json_default)
+    )
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0, "max_tokens": 300}
+            "temperature": 0, "max_tokens": 700,
+            "response_format": {"type": "json_object"}}
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -80,7 +87,20 @@ def recommend(payload):
             response = requests.post(f"{base}/chat/completions", json=body, headers=headers, timeout=20)
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
-            return _validate(json.loads(content))
+            if not isinstance(content, str):
+                raise ValueError("LLM response content was not text")
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            try:
+                decoded = json.loads(content)
+            except json.JSONDecodeError:
+                # Some compatible gateways wrap a valid object in extra text.
+                start, end = content.find("{"), content.rfind("}")
+                if start < 0 or end <= start:
+                    raise
+                decoded = json.loads(content[start:end + 1])
+            return _validate(decoded)
         except (ValueError, KeyError, IndexError, requests.RequestException) as exc:
             last_error = exc
     raise RuntimeError(f"LLM response failed validation after retry: {last_error}")
