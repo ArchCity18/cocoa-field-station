@@ -120,3 +120,165 @@ This system is an educational prototype, not a production-ready security service
 ## Conclusion
 
 The project demonstrates how identification, two-factor authentication, role-based authorization, password hashing, prepared SQL, encrypted MFA storage, session revocation, data minimization, and backups can work together in a small application. It applies the CIA triad by restricting access, validating and recording changes, and planning recovery. The implementation also makes its remaining gaps visible: local HTTP, unverified email invitations, limited rate limiting and recovery, browser token exposure, and untested backup restoration. That distinction between implemented controls and outstanding work is essential when presenting an information-security system honestly.
+
+## Appendix A. Code excerpts for explaining the implementation
+
+The following short excerpts are taken from the project source. The file and line references point to the current repository revision and may shift if the code changes. In a presentation, introduce the security objective first, point to the excerpt, then explain what it protects and what it does not prove.
+
+### A1. Password hashing with Argon2id and a pepper
+
+**Location:** `backend/api.php`, lines 61–70.
+
+```php
+if (strlen($password) < 12 || strlen($password) > 1024) {
+    fail(422, 'Use a password between 12 and 1024 characters.');
+}
+$hash = password_hash($password . $config['pepper'], PASSWORD_ARGON2ID);
+$stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,'inputer')");
+$stmt->execute([$name, $email, $hash]);
+```
+
+**How to explain it:** “The API rejects passwords outside its allowed length, adds a server-only pepper, and asks PHP to hash with Argon2id. PHP generates a unique salt and stores the algorithm information inside the encoded hash. The database never receives the original password. The pepper is stored outside the client and repository.”
+
+### A2. Verifying the first factor and continuing to TOTP
+
+**Location:** `backend/api.php`, lines 79–85.
+
+```php
+$stmt = $pdo->prepare(
+    'SELECT id,name,email,password_hash,role,totp_enabled FROM users WHERE email=? AND is_active=1'
+);
+$stmt->execute([$email]);
+$user = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$user || !password_verify($password . $config['pepper'], $user['password_hash'])) {
+    fail(401, 'Email or password is incorrect.');
+}
+start_totp_challenge($pdo, $config, $user);
+```
+
+**How to explain it:** “This is the password check. The query only looks up an active account, and the password is checked against the stored Argon2id hash. Correct password alone does not create a session; it starts the second-factor challenge.”
+
+### A3. TOTP challenge limits and one-time session issuance
+
+**Location:** `backend/api.php`, lines 117–142.
+
+```php
+if (!$challenge || $challenge['consumed_at'] !== null
+    || strtotime($challenge['expires_at'] . ' UTC') < time()
+    || (int)$challenge['attempts'] >= 5) {
+    $pdo->rollBack();
+    fail(401, 'Code expired or attempts exceeded. Sign in again for a new code.');
+}
+// A valid TOTP is checked before the challenge is consumed.
+$token = bin2hex(random_bytes(32));
+$tokenHash = hash('sha256', $token);
+$pdo->prepare('INSERT INTO api_tokens (user_id,token_hash,expires_at) VALUES (?,?,?)')
+    ->execute([$challenge['uid'], $tokenHash, gmdate('Y-m-d H:i:s', time() + 43200)]);
+```
+
+**How to explain it:** “A challenge is time-limited, single-use, and capped at five incorrect codes. After successful verification, the server creates a random token and stores only its SHA-256 digest with a 12-hour expiry. If a database leak exposed the token table, the raw bearer tokens would not be present.”
+
+### A4. Parameterized SQL and authenticated role checks
+
+**Location:** `backend/api.php`, lines 426–435.
+
+```php
+$stmt = $pdo->prepare(
+    'SELECT u.id,u.name,u.email,u.role FROM api_tokens t JOIN users u ON u.id=t.user_id
+     WHERE t.token_hash=? AND t.expires_at>? AND u.is_active=1'
+);
+$stmt->execute([hash('sha256', $token), gmdate('Y-m-d H:i:s')]);
+...
+function require_role(array $user, array $roles): void {
+    if (!in_array($user['role'] ?? '', $roles, true)) {
+        fail(403, 'Your role is not allowed to perform this action.');
+    }
+}
+```
+
+**How to explain it:** “The API checks the token digest, expiry, and whether the user is still active. Protected routes then check role on the server. Placeholders bind values separately from SQL syntax, reducing SQL injection risk. Client-side button visibility is not relied on for authorization.”
+
+### A5. Encrypting authenticator secrets in Streamlit
+
+**Location:** `totp.py`, lines 48–57; `app.py`, lines 267–275.
+
+```python
+def encrypt_secret(secret, cookie_secret):
+    nonce = secrets.token_bytes(12)
+    ciphertext = AESGCM(_encryption_key(cookie_secret)).encrypt(
+        nonce, secret.encode("ascii"), None
+    )
+    return base64.b64encode(nonce + ciphertext).decode("ascii")
+```
+
+```python
+if totp.verify_code(secret, code):
+    if not enrolled:
+        db.set_totp_secret(sub, totp.encrypt_secret(secret, cookie_secret))
+    st.session_state.mfa_verified_sub = sub
+    st.session_state.mfa_verified_at = time.time()
+```
+
+**How to explain it:** “The authenticator seed must be recoverable by the server to validate future codes, so it cannot be stored as a one-way password hash. Instead, AES-GCM encrypts it with a fresh random nonce. The app stores the encrypted value, not the readable seed. The encryption key depends on the Streamlit cookie secret, so that secret must be protected and kept stable.”
+
+### A6. Minimizing information sent to the live model
+
+**Location:** `agent.py`, lines 18–34.
+
+```python
+model_weather = [
+    None if row is None else {
+        key: row[key]
+        for key in ("date", "rainfall_mm", "humidity_pct", "temp_c", "days_since_last_spray")
+    }
+    for row in last_seven
+]
+model_cases = [
+    {key: case[key] for key in ("id", "plot_id", "risk_bucket", "recommendation", "human_decision")}
+    for case in cases
+]
+```
+
+**How to explain it:** “The database contains additional fields such as free-text inspection notes, account email, and override reasons. This code constructs a smaller allowlisted payload for the model. That is data minimization: only measurements and decision labels needed for the suggestion leave the app.”
+
+### A7. Denying direct client access to Supabase tables
+
+**Location:** `backend/supabase_schema.sql`, lines 118–131.
+
+```sql
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.api_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.field_weather ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.field_decisions ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.users, public.login_challenges, public.api_tokens,
+    public.auth_accounts, public.blocked_auth_identities, public.inputer_invites,
+    public.field_plots, public.field_weather, public.field_decisions
+    FROM anon, authenticated;
+```
+
+**How to explain it:** “The mobile and browser clients do not receive the database password or direct table permissions. They call the application server, which authenticates the request and applies role rules. Row-level security and revoked grants add a database layer against accidental direct access. The server-side database credential still needs least-privilege configuration.”
+
+### A8. Encrypted scheduled database backups
+
+**Location:** `.github/workflows/supabase-backup.yml`, lines 3–6 and 40–62.
+
+```yaml
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+```
+
+```yaml
+openssl enc -aes-256-cbc -pbkdf2 -salt \
+  -in "/tmp/cocoa-field-station-${stamp}.tar.gz" \
+  -out "cocoa-field-station-${stamp}.tar.gz.enc" \
+  -pass env:BACKUP_ENCRYPTION_KEY
+```
+
+**How to explain it:** “GitHub Actions is configured to run a database dump once daily or manually. The workflow encrypts the archive before storing it as an artifact, retained for 30 days. It depends on two GitHub repository secrets being configured and a successful workflow run. We still need to test restoring an artifact; a scheduled job is not evidence of recoverability until restore works.”
+
+### Suggested short presentation summary
+
+“I used two factors to reduce the chance that a stolen password is enough to enter the system. Passwords use Argon2id with a unique salt and a private pepper. The PHP API uses parameterized SQL and enforces the user's role on every protected route. Supabase tables are not directly available to the client, and the live model receives only the minimum weather and decision data needed. These controls support confidentiality and integrity; the backup workflow supports availability. I also documented the remaining gaps: public API HTTPS, shared rate limits, account recovery, proof of email ownership for password registration, least-privilege database credentials, and a tested restore.”
