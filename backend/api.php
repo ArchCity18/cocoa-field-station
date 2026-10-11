@@ -383,7 +383,17 @@ function request_field_model_recommendation(array $config, string $plotId, array
 fail(404, 'Endpoint not found.');
 
 function bearer_token(): ?string {
-    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    // Apache/XAMPP may expose Authorization under a redirected server key,
+    // and some SAPIs only provide it through getallheaders().
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+    if ($header === '' && function_exists('getallheaders')) {
+        foreach (getallheaders() as $name => $value) {
+            if (strcasecmp((string)$name, 'Authorization') === 0) {
+                $header = (string)$value;
+                break;
+            }
+        }
+    }
     if (!preg_match('/^Bearer\s+([a-f0-9]{64})$/i', $header, $match)) return null;
     return $match[1];
 }
