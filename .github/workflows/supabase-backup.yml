@@ -1,0 +1,62 @@
+name: Supabase database backup
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.120.0
+
+      - name: Verify backup secrets exist
+        shell: bash
+        run: |
+          test -n "$SUPABASE_DB_URL" || { echo "Missing SUPABASE_DB_URL repository secret"; exit 1; }
+          test -n "$BACKUP_ENCRYPTION_KEY" || { echo "Missing BACKUP_ENCRYPTION_KEY repository secret"; exit 1; }
+
+      - name: Dump database schema and data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p backup-work
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f backup-work/schema.sql
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f backup-work/data.sql --data-only --use-copy
+
+      - name: Encrypt backup
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+          tar -czf "/tmp/cocoa-field-station-${stamp}.tar.gz" -C backup-work schema.sql data.sql
+          openssl enc -aes-256-cbc -pbkdf2 -salt \
+            -in "/tmp/cocoa-field-station-${stamp}.tar.gz" \
+            -out "cocoa-field-station-${stamp}.tar.gz.enc" \
+            -pass env:BACKUP_ENCRYPTION_KEY
+          rm -rf backup-work "/tmp/cocoa-field-station-${stamp}.tar.gz"
+
+      - name: Store encrypted backup for 30 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: cocoa-field-station-supabase-backup-${{ github.run_id }}
+          path: cocoa-field-station-*.tar.gz.enc
+          if-no-files-found: error
+          retention-days: 30
