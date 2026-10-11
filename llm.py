@@ -1,11 +1,22 @@
 """OpenAI-compatible JSON client with a deterministic local mock."""
 import json
 import os
+from datetime import date, datetime
+from decimal import Decimal
 
 import requests
 import streamlit as st
 
 ACTIONS = {"spray", "wait", "inspect"}
+
+
+def _json_default(value):
+    """Convert PostgreSQL and date values into JSON-safe prompt values."""
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _setting(name, default=""):
@@ -55,7 +66,7 @@ def recommend(payload):
     # An incomplete hosted-model setup should still leave the demo usable.
     if mock_enabled or not base or not model:
         return _validate(_mock(payload))
-    prompt = "Return JSON only with action (spray|wait|inspect), rationale, evidence (array), cited_case_ids (array). Never invent case IDs.\n" + json.dumps(payload)
+    prompt = "Return JSON only with action (spray|wait|inspect), rationale, evidence (array), cited_case_ids (array). Never invent case IDs.\n" + json.dumps(payload, default=_json_default)
     body = {"model": model, "messages": [{"role": "user", "content": prompt}],
             "temperature": 0, "max_tokens": 300}
     headers = {"Content-Type": "application/json"}
