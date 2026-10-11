@@ -218,7 +218,7 @@ if ($method === 'GET' && $path === '/field/plot') {
 if ($method === 'POST' && $path === '/field/recommendation') {
     $user = require_user($pdo);
     $plotId = trim((string)($body['plot_id'] ?? ''));
-    $result = create_field_recommendation($pdo, (int)$user['id'], $plotId);
+    $result = create_field_recommendation($pdo, (int)$user['id'], $plotId, $config);
     echo json_encode(['ok' => true, 'recommendation' => $result]); exit;
 }
 
@@ -288,11 +288,16 @@ function seed_field_workspace(PDO $pdo): void {
         ? 'INSERT INTO field_plots(plot_id,description) VALUES(?,?) ON CONFLICT(plot_id) DO NOTHING'
         : 'INSERT IGNORE INTO field_plots(plot_id,description) VALUES(?,?)');
     foreach ($plots as $id => $description) $insertPlot->execute([$id,$description]);
-    if ((int)$pdo->query('SELECT COUNT(*) FROM field_weather')->fetchColumn() > 0) return;
     $insertWeather = $pdo->prepare($isPostgres
         ? 'INSERT INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(plot_id,observation_date) DO NOTHING'
         : 'INSERT IGNORE INTO field_weather(plot_id,observation_date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray,inspection_note) VALUES(?,?,?,?,?,?,?)');
     foreach ($plots as $plot => $_description) {
+        // Seed each demo plot independently. This repairs a partially seeded
+        // database while leaving existing observations untouched on conflicts.
+        $countStmt = $pdo->prepare('SELECT COUNT(*) FROM field_weather WHERE plot_id=?');
+        $countStmt->execute([$plot]);
+        $expected = $plot === 'Plot B' ? 26 : 30;
+        if ((int)$countStmt->fetchColumn() >= $expected) continue;
         for ($ago = 29; $ago >= 0; $ago--) {
             if ($plot === 'Plot B' && in_array($ago, [1,3,5,6], true)) continue;
             $step = 29 - $ago; $n1 = (sin(($step + 1) * 12.9898 + ord($plot[5])) + 1) / 2; $n2 = (sin(($step + 1) * 78.233 + ord($plot[5]) * 0.7) + 1) / 2;
@@ -306,7 +311,7 @@ function seed_field_workspace(PDO $pdo): void {
     }
 }
 
-function create_field_recommendation(PDO $pdo, int $userId, string $plotId): array {
+function create_field_recommendation(PDO $pdo, int $userId, string $plotId, array $config = []): array {
     $stmt = $pdo->prepare('SELECT observation_date AS date,rainfall_mm,humidity_pct,temp_c,days_since_last_spray FROM field_weather WHERE plot_id=? ORDER BY observation_date DESC LIMIT 7');
     $stmt->execute([$plotId]); $days = array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
     if (!$days) fail(404, 'Plot observations are not available.');
@@ -314,13 +319,65 @@ function create_field_recommendation(PDO $pdo, int $userId, string $plotId): arr
     if ($rain >= 50 && $humidity >= 90) { $bucket = 'high'; $suggestion = $since >= 14 ? 'spray' : 'inspect'; }
     elseif ($rain >= 25 || $humidity >= 82) { $bucket = 'medium'; $suggestion = 'inspect'; }
     else { $bucket = 'low'; $suggestion = 'wait'; }
-    $confidence = round($count / 7, 3); $gated = $confidence < 0.7; $action = $gated ? 'inspect' : $suggestion;
+    $model = request_field_model_recommendation($config, $plotId, $days, $bucket, $suggestion);
+    $engine = $model ? 'llm' : 'rules';
+    $confidence = round(($count / 7) * ($model ? ($model['action'] === $suggestion ? 1 : 0.75) : 1), 3);
+    $gated = $confidence < 0.7;
+    $action = $gated ? 'inspect' : ($model['action'] ?? $suggestion);
     $evidence = ['Data completeness: ' . $count . '/7 observations', 'Placeholder rule bucket: ' . $bucket . ' (' . $suggestion . ')', '7-day rainfall: ' . round($rain,1) . ' mm', 'Average humidity: ' . round($humidity) . '%'];
-    $rationale = 'Rule-based suggestion from simulated plot observations. Thresholds are illustrative placeholders and need agronomy review. A grower must review the evidence and record the decision; the app never acts on the plot.';
+    $rationale = $model
+        ? $model['rationale'] . ' This is an AI-generated advisory based on simulated/entered observations; thresholds and advice need agronomy review.'
+        : 'Rule-based suggestion from simulated plot observations. Thresholds are illustrative placeholders and need agronomy review. A grower must review the evidence and record the decision; the app never acts on the plot.';
+    if ($model) $evidence[] = 'Model suggestion: ' . $model['action'] . '; rule comparison: ' . ($model['action'] === $suggestion ? 'agrees' : 'differs');
     $stmt = $pdo->prepare('INSERT INTO field_decisions(user_id,plot_id,risk_bucket,recommendation,rationale,evidence_json,confidence,gated) VALUES(?,?,?,?,?,?,?,?)');
     $stmt->execute([$userId,$plotId,$bucket,$action,$rationale,json_encode($evidence),$confidence,(int)$gated]);
     $decisionId = generated_id($pdo, 'field_decisions');
-    return ['id'=>(int)$decisionId,'plot_id'=>$plotId,'risk_bucket'=>$bucket,'action'=>$action,'rationale'=>$rationale,'evidence'=>$evidence,'confidence'=>$confidence,'gated'=>$gated,'pending'=>true,'human_decision'=>null,'human_reason'=>null,'ts'=>gmdate(DATE_ATOM)];
+    return ['id'=>(int)$decisionId,'plot_id'=>$plotId,'risk_bucket'=>$bucket,'action'=>$action,'engine'=>$engine,'rationale'=>$rationale,'evidence'=>$evidence,'confidence'=>$confidence,'gated'=>$gated,'pending'=>true,'human_decision'=>null,'human_reason'=>null,'ts'=>gmdate(DATE_ATOM)];
+}
+
+/** Optional OpenAI-compatible model call. Empty/misconfigured settings use rules. */
+function request_field_model_recommendation(array $config, string $plotId, array $days, string $risk, string $ruleAction): ?array {
+    $baseUrl = trim((string)($config['llm_base_url'] ?? ''));
+    $model = trim((string)($config['llm_model'] ?? ''));
+    $apiKey = trim((string)($config['llm_api_key'] ?? ''));
+    if (empty($config['llm_enabled']) || $baseUrl === '' || $model === '' || !function_exists('curl_init')) return null;
+
+    $endpoint = rtrim($baseUrl, '/');
+    if (!str_ends_with($endpoint, '/chat/completions')) $endpoint .= '/chat/completions';
+    $payload = [
+        'model' => $model,
+        'temperature' => 0.1,
+        'max_tokens' => 350,
+        'messages' => [
+            ['role' => 'system', 'content' => 'You are a cautious cocoa field decision-support assistant. Return only JSON with keys action (spray, wait, or inspect) and rationale (brief string). Do not claim certainty. This is advisory only; a human grower decides.'],
+            ['role' => 'user', 'content' => json_encode(['plot_id'=>$plotId,'observations'=>$days,'placeholder_risk_bucket'=>$risk,'rule_suggestion'=>$ruleAction], JSON_UNESCAPED_SLASHES)],
+        ],
+    ];
+    $headers = ['Content-Type: application/json', 'Accept: application/json'];
+    if ($apiKey !== '') $headers[] = 'Authorization: Bearer ' . $apiKey;
+    $curl = curl_init($endpoint);
+    curl_setopt_array($curl, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 20,
+    ]);
+    $raw = curl_exec($curl);
+    $status = (int)curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+    curl_close($curl);
+    if (!is_string($raw) || $status < 200 || $status >= 300) return null;
+    $response = json_decode($raw, true);
+    $content = $response['choices'][0]['message']['content'] ?? null;
+    if (!is_string($content)) return null;
+    $content = preg_replace('/^```(?:json)?\s*|\s*```$/i', '', trim($content));
+    $advice = json_decode($content, true);
+    if (!is_array($advice)) return null;
+    $action = $advice['action'] ?? '';
+    $rationale = trim((string)($advice['rationale'] ?? ''));
+    if (!in_array($action, ['spray','wait','inspect'], true) || $rationale === '') return null;
+    return ['action'=>$action, 'rationale'=>mb_substr($rationale, 0, 1200)];
 }
 
 fail(404, 'Endpoint not found.');

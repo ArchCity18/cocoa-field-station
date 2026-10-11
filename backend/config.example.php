@@ -19,4 +19,9 @@ return [
     'google_web_client_id' => '',
     'google_android_client_id' => '',
     'google_ios_client_id' => '',
+    // Optional OpenAI-compatible endpoint. Keep its API key only in private config.php.
+    'llm_enabled' => false,
+    'llm_base_url' => '', // Example: https://provider.example/v1
+    'llm_model' => '',
+    'llm_api_key' => '',
 ];
