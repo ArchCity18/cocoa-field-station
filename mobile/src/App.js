@@ -151,8 +151,8 @@ export default function App() {
       {screen === 'totp' ? <><View style={s.cardIcon}><Feather name="key" size={19} color={C.green} /></View><Text style={s.cardTitle}>{setup ? 'Connect Google Authenticator' : 'Verify it’s you'}</Text>{setup && challenge?.otpauth_uri && <View style={s.qrBox}><QRCode value={challenge.otpauth_uri} size={180} /></View>}{setup && <><Text style={s.label}>Can’t scan? Enter this setup key manually</Text><Text selectable style={s.secret}>{challenge.secret}</Text><Text style={s.muted}>Setup expires in 10 minutes. Enter the code shown in your authenticator app to finish.</Text></>}<Field label="6-digit authenticator code" icon="hash" value={form.code} onChangeText={(v) => change('code', v.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" placeholder="000000" /></> : <>
         {mode === 'register' && <Field label="Your name" icon="user" value={form.name} onChangeText={(v) => change('name', v)} placeholder="e.g. Ama Mensah" />}
         <Field label="Email address" icon="mail" value={form.email} onChangeText={(v) => change('email', v)} keyboardType="email-address" autoCapitalize="none" placeholder="you@example.com" />
-        <Field label="Password" icon="lock" value={form.password} onChangeText={(v) => change('password', v)} secureTextEntry placeholder="At least 10 characters" />
-        {mode === 'register' && <Text style={s.helper}>New accounts start with the user role.</Text>}
+        <Field label="Password" icon="lock" value={form.password} onChangeText={(v) => change('password', v)} secureTextEntry placeholder="At least 12 characters" />
+        {mode === 'register' && <Text style={s.helper}>Password sign-up requires a manager invitation until email verification is configured. New accounts start with the inputer role.</Text>}
       </>}
       {!!error && <View style={s.error}><Feather name="alert-circle" size={16} color={C.error} /><Text style={s.errorText}>{error}</Text></View>}
       <Button title={screen === 'totp' ? setup ? 'Connect and continue' : 'Verify and continue' : mode === 'register' ? 'Create account' : 'Continue securely'} busy={busy} onPress={submit} />

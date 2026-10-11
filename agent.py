@@ -17,8 +17,21 @@ def build_recommendation(plot_id, config=None):
     if should_apply_caution_nudge(cases):
         risk["bucket"] = raise_bucket(risk["bucket"])
         risk["action"] = action_for_bucket(risk["bucket"], risk["days_since_last_spray"], config)
-    payload = {"plot_id": plot_id, "weather_last_7_days": last_seven, "risk": risk,
-               "completeness_days": len(present), "past_cases": cases}
+    # Send only the fields needed for the recommendation. Field notes, names,
+    # and email addresses stay in the local/shared database.
+    model_weather = [
+        None if row is None else {
+            key: row[key]
+            for key in ("date", "rainfall_mm", "humidity_pct", "temp_c", "days_since_last_spray")
+        }
+        for row in last_seven
+    ]
+    model_cases = [
+        {key: case[key] for key in ("id", "plot_id", "risk_bucket", "recommendation", "human_decision")}
+        for case in cases
+    ]
+    payload = {"plot_id": plot_id, "weather_last_7_days": model_weather, "risk": risk,
+               "completeness_days": len(present), "past_cases": model_cases}
     try:
         answer = llm.recommend(payload)
     except Exception as exc:

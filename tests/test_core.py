@@ -42,6 +42,33 @@ def test_confidence_formula_complete_agreement(monkeypatch):
     assert result["confidence"] == pytest.approx(0.5)
 
 
+def test_model_payload_excludes_field_notes_and_email(monkeypatch):
+    monkeypatch.setattr("agent.load_config", lambda: CONFIG)
+    monkeypatch.setattr("agent.db.weather_for_plot", lambda plot: [
+        {"date": "2026-10-10", "rainfall_mm": 2, "humidity_pct": 80, "temp_c": 25,
+         "days_since_last_spray": 20, "inspection_note": "private farmer note", "entered_by": "person@example.com"}
+    ])
+    monkeypatch.setattr("agent.db.get_past_overrides", lambda bucket, limit: [
+        {"id": 7, "plot_id": "Plot A", "risk_bucket": "low", "recommendation": "wait",
+         "human_decision": "inspect", "human_reason": "private reason"}
+    ])
+    captured = {}
+    def fake_recommend(payload):
+        captured.update(payload)
+        return {"action": "wait", "rationale": "test", "evidence": [], "cited_case_ids": [7]}
+    monkeypatch.setattr("agent.llm.recommend", fake_recommend)
+
+    build_recommendation("Plot A")
+
+    encoded = str(captured)
+    assert "inspection_note" not in encoded
+    assert "entered_by" not in encoded
+    assert "human_reason" not in encoded
+    assert "person@example.com" not in encoded
+    assert "private farmer note" not in encoded
+    assert "private reason" not in encoded
+
+
 def test_override_nudge_level_and_action():
     assert raise_bucket("low") == "medium"
     assert raise_bucket("medium") == "high"

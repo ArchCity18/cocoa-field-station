@@ -6,7 +6,7 @@ This Expo React Native application and PHP API demonstrate user identification, 
 
 | Requirement | Streamlit web app | Expo mobile/web app |
 | --- | --- | --- |
-| Identify a user | Verified Google subject and email | Normalized email/password or verified Google subject |
+| Identify a user | Verified Google subject and email | Invited normalized email/password or verified Google subject |
 | Two-factor authentication | TOTP authenticator code after Google sign-in | TOTP after password or Google sign-in |
 | Role authorization | Inputer, manager, admin, administrator | API-enforced inputer, manager, admin, administrator |
 | Password storage | Google handles the Google password; app stores none | PHP Argon2id hash, automatic unique salt, private server pepper |
@@ -29,7 +29,7 @@ Removing an Expo inputer deactivates the account and revokes its API sessions. T
 
 ## Start the local server and database
 
-1. Copy the contents of `backend/` to `C:\xampp\htdocs\cocoa-security\` so `api.php` is at `C:\xampp\htdocs\cocoa-security\api.php`.
+1. Copy the contents of `backend/` to `C:\xampp\htdocs\cocoa-security\` so `api.php` is at `C:\xampp\htdocs\cocoa-security\api.php`. In this layout, the private config must be at `C:\xampp\htdocs\cocoa-security\config.php`, beside `api.php`.
 2. Start Apache and MySQL from XAMPP Control Panel.
 3. Open `http://localhost/phpmyadmin`. For a new install, import `backend/schema.sql`. For a database created by an earlier version, back it up, then import `backend/migrations/002_google_totp.sql` if not already applied, followed by `backend/migrations/003_roles_inputers_and_audit.sql` exactly once.
 4. Create a restricted MySQL login from phpMyAdmin's SQL page (choose a strong unique password):
@@ -39,7 +39,7 @@ Removing an Expo inputer deactivates the account and revokes its API sessions. T
    GRANT SELECT, INSERT, UPDATE, DELETE ON cocoa_security.* TO 'cocoa_app'@'127.0.0.1';
    ```
 
-5. Copy `backend/config.example.php` to `C:\xampp\htdocs\cocoa-security\backend\config.php`. Set its database password to the same value, generate a long random `pepper`, and keep the file private. It must never be committed.
+5. Copy `backend/config.example.php` to `C:\xampp\htdocs\cocoa-security\config.php`. Set its database password to the same value, generate a long random `pepper`, and keep it private. It must never be committed.
 6. Make sure `allowed_origins` includes the exact Expo web origin you use (normally `http://localhost:8081` or `http://127.0.0.1:8081`). Native requests do not send a browser origin. Keep the API on localhost or a trusted private network.
 7. Visit `http://localhost/cocoa-security/api.php?route=health`. The response should be JSON with `ok: true`.
 
@@ -67,7 +67,7 @@ Run `npm run web` for the browser client. The default API URL uses localhost on 
 
 For Expo web, create a Google OAuth web client and register the exact web redirect URI shown under the sign-in button; configure its web client ID in the private XAMPP `config.php`. No Google client secret belongs in the Expo bundle. Android uses native Google Credential Manager via `react-native-nitro-google-signin`, not an OAuth browser redirect. Create Android and Web OAuth clients in the same Google project; the Android client uses this app's package and EAS SHA-1, while the native library receives the Web client ID. Do not add a `package:/oauthredirect` URI for Android: Google no longer supports custom-scheme OAuth redirects on Android. The PHP API verifies Google's signed ID token and verified email. Native Google sign-in requires the EAS development build; Expo Go does not include its native module.
 
-Email/password registration identifies users by normalized email. The first successful login starts TOTP enrollment: scan the QR/manual key using Google Authenticator or another compatible authenticator, then enter a six-digit code. Subsequent logins require a current code. Challenges expire after ten minutes and allow five failed attempts. TOTP secrets are encrypted before storage, and session tokens are stored as SHA-256 digests and expire after twelve hours.
+Email/password registration identifies users by normalized email and is invitation-only until an email-verification provider is configured. A manager must add the exact email first. Verified Google sign-in is also available. The first successful login starts TOTP enrollment: scan the QR/manual key using Google Authenticator or another compatible authenticator, then enter a six-digit code. Subsequent logins require a current code. Challenges expire after ten minutes and allow five failed attempts per challenge. TOTP secrets are encrypted before storage, and session tokens are stored as SHA-256 digests and expire after twelve hours. This prototype still needs deployment-level rate limiting and account recovery controls before public use.
 
 ### Android native Google sign-in with EAS
 
@@ -105,6 +105,6 @@ For Streamlit, set `MANAGER_EMAILS`, `ADMIN_EMAILS`, and/or `ADMINISTRATOR_EMAIL
 
 ## Security and limitations
 
-PHP's `password_hash(..., PASSWORD_ARGON2ID)` creates a unique random salt and stores its algorithm/cost metadata with each hash; the private server pepper is added before hashing. Passwords and TOTP codes are not stored. Parameterized SQL prevents user input from being interpolated into database statements. Role checks are enforced server-side. Database transport is local TCP for XAMPP; public use requires TLS, restrictive origin configuration, rate limiting, secure backups, secret rotation, and an account recovery plan.
+PHP's `password_hash(..., PASSWORD_ARGON2ID)` creates a unique random salt and stores its algorithm/cost metadata with each hash; the private server pepper is added before hashing. Passwords and TOTP codes are not stored. Parameterized SQL prevents user input from being interpolated into database statements. Role checks are enforced server-side. Database transport is local TCP for XAMPP; public use requires HTTPS for the API, restrictive origin configuration, shared rate limiting, secure backups, secret rotation, and a tested account recovery plan. This is an educational prototype, not a production-hardened service.
 
 When the Supabase connection secret is set, both app backends use the shared Supabase database for plot observations and decisions. Without it, Streamlit falls back to its local SQLite file and the PHP API uses the configured XAMPP database. Weather rows are example/simulated data, and recommendations are illustrative rather than validated farm advice.

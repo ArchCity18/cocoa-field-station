@@ -153,11 +153,10 @@ def get_or_create_auth_account(google_sub, email, name, bootstrap_role="inputer"
             _execute(db, "DELETE FROM inputer_invites WHERE email=?", (email,))
             row = _execute(db, "SELECT * FROM auth_accounts WHERE google_sub=?", (google_sub,)).fetchone()
         else:
-            if bootstrap_role != "inputer":
-                _execute(db, "UPDATE auth_accounts SET email=?,name=?,role=? WHERE google_sub=?",
-                         (email, name, bootstrap_role, google_sub))
-            else:
-                _execute(db, "UPDATE auth_accounts SET email=?,name=? WHERE google_sub=?", (email, name, google_sub))
+            # Role allowlists are authoritative. This also removes stale
+            # elevated roles when an email is taken out of those lists.
+            _execute(db, "UPDATE auth_accounts SET email=?,name=?,role=? WHERE google_sub=?",
+                     (email, name, bootstrap_role, google_sub))
             row = _execute(db, "SELECT * FROM auth_accounts WHERE google_sub=?", (google_sub,)).fetchone()
         return dict(row)
 

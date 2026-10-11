@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-session_start();
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
@@ -37,8 +36,6 @@ try {
     $isPostgres = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'pgsql';
 } catch (Throwable $e) { fail(500, 'Database unavailable. Check the private database configuration and required PDO driver.'); }
 
-seed_field_workspace($pdo);
-
 $path = isset($_GET['route']) ? '/' . trim((string)$_GET['route'], '/') : (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 $apiPrefix = '/cocoa-security/api.php';
 if (str_starts_with($path, $apiPrefix)) { $path = substr($path, strlen($apiPrefix)); }
@@ -62,6 +59,11 @@ if ($method === 'POST' && $path === '/register') {
     if (mb_strlen($name) < 2 || mb_strlen($name) > 120 || !preg_match('/^[\p{L}\p{M} .\'-]+$/u', $name)) { fail(422, 'Enter a valid name between 2 and 120 characters.'); }
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { fail(422, 'Enter a valid email address.'); }
     if (strlen($password) < 12 || strlen($password) > 1024) { fail(422, 'Use a password between 12 and 1024 characters.'); }
+    // Without an email verification provider, only allow addresses explicitly
+    // invited by a manager/administrator to create password accounts.
+    $invite = $pdo->prepare('SELECT 1 FROM inputer_invites WHERE LOWER(email)=?');
+    $invite->execute([$email]);
+    if (!$invite->fetchColumn()) { fail(403, 'Password registration is invitation-only. Ask a manager to add your email first, or use verified Google sign-in.'); }
     $hash = password_hash($password . $config['pepper'], PASSWORD_ARGON2ID);
     try {
         $stmt = $pdo->prepare("INSERT INTO users (name,email,password_hash,role) VALUES (?,?,?,'inputer')");
@@ -86,6 +88,11 @@ if ($method === 'POST' && $path === '/login') {
 if ($method === 'POST' && $path === '/google-login') {
     $idToken = (string)($body['id_token'] ?? '');
     if ($idToken === '' || strlen($idToken) > 10000) { fail(422, 'Google sign-in token is missing.'); }
+    // Bound auth artifact growth during ordinary auth traffic without a cron job.
+    if (random_int(1, 100) === 1) {
+        $pdo->exec('DELETE FROM login_challenges WHERE created_at < ' . ($isPostgres ? "CURRENT_TIMESTAMP - INTERVAL '7 days'" : "DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)"));
+        $pdo->exec('DELETE FROM api_tokens WHERE expires_at < ' . ($isPostgres ? "CURRENT_TIMESTAMP - INTERVAL '7 days'" : "DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)"));
+    }
     try { $claims = verify_google_id_token($idToken, $config); }
     catch (Throwable $e) { fail(401, 'Google sign-in could not be verified. Try again.'); }
     $sub = (string)($claims->sub ?? ''); $email = strtolower((string)($claims->email ?? ''));
@@ -189,12 +196,14 @@ if ($method === 'DELETE' && $path === '/admin/inputers') {
 
 if ($method === 'GET' && $path === '/field/plots') {
     require_user($pdo);
+    seed_field_workspace($pdo);
     $plots = $pdo->query('SELECT plot_id,description FROM field_plots ORDER BY plot_id')->fetchAll(PDO::FETCH_ASSOC);
     echo json_encode(['ok' => true, 'plots' => $plots]); exit;
 }
 
 if ($method === 'GET' && $path === '/field/plot') {
     require_user($pdo);
+    seed_field_workspace($pdo);
     $plotId = trim((string)($_GET['plot_id'] ?? 'Plot A'));
     $days = min(30, max(7, (int)($_GET['days'] ?? 14)));
     $stmt = $pdo->prepare('SELECT plot_id,description FROM field_plots WHERE plot_id=?');
@@ -214,6 +223,7 @@ if ($method === 'GET' && $path === '/field/plot') {
         'completeness_days' => $count];
     echo json_encode(['ok' => true, 'plot' => $plot, 'observations' => $observations, 'summary' => $summary]); exit;
 }
+
 
 if ($method === 'POST' && $path === '/field/recommendation') {
     $user = require_user($pdo);

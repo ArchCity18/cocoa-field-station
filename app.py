@@ -131,7 +131,7 @@ def show_authentication():
             with st.container(border=True):
                 st.subheader("Private by design", icon=":material/lock:")
                 st.write("Google verifies your identity. The app stores no Google password.")
-                st.caption("Authenticator secrets are encrypted in the app database. Field records remain shared in this prototype.")
+                st.caption("Authenticator secrets are encrypted in the app database. Field records remain shared in this prototype. Live AI receives weather metrics and decision labels, not notes or account emails.")
 
         if st.button("Back to welcome page", icon=":material/arrow_back:"):
             st.session_state.started = False
@@ -139,7 +139,7 @@ def show_authentication():
 
 
 def clear_mfa_state():
-    for key in ("mfa_subject", "mfa_verified_sub", "mfa_pending_secret", "mfa_pending_sub", "mfa_started_at", "mfa_attempts", "auth_role"):
+    for key in ("mfa_subject", "mfa_verified_sub", "mfa_verified_at", "mfa_pending_secret", "mfa_pending_sub", "mfa_started_at", "mfa_attempts", "auth_role"):
         st.session_state.pop(key, None)
 
 
@@ -163,15 +163,22 @@ def require_authenticator():
         st.session_state.mfa_attempts = 0
 
     if st.session_state.get("mfa_verified_sub") == sub:
-        account = db.auth_account(sub)
-        if not account:
-            st.error("This account has been removed from the field station.")
-            if st.button("Sign out", key="disabled_account_signout"):
-                clear_mfa_state()
-                st.logout()
-            return False
-        st.session_state.auth_role = account["role"]
-        return True
+        verified_at = st.session_state.get("mfa_verified_at", 0)
+        if time.time() - verified_at <= 12 * 60 * 60:
+            account = db.auth_account(sub)
+            if not account:
+                st.error("This account has been removed from the field station.")
+                if st.button("Sign out", key="disabled_account_signout"):
+                    clear_mfa_state()
+                    st.logout()
+                return False
+            st.session_state.auth_role = account["role"]
+            return True
+        # Require a fresh authenticator check at least every 12 hours.
+        st.session_state.pop("mfa_verified_sub", None)
+        st.session_state.pop("mfa_verified_at", None)
+        st.session_state.mfa_started_at = time.time()
+        st.session_state.mfa_attempts = 0
 
     auth_config = st.secrets.get("auth", {})
     cookie_secret = str(auth_config.get("cookie_secret", ""))
@@ -262,6 +269,7 @@ def require_authenticator():
                     if not enrolled:
                         db.set_totp_secret(sub, totp.encrypt_secret(secret, cookie_secret))
                     st.session_state.mfa_verified_sub = sub
+                    st.session_state.mfa_verified_at = time.time()
                     st.session_state.pop("mfa_pending_secret", None)
                     st.session_state.pop("mfa_pending_sub", None)
                     st.session_state.mfa_attempts = 0
@@ -473,6 +481,7 @@ def show_plot_monitor(plot_id):
                 st.subheader("A clearer next step")
                 st.write("Generate a fresh reading from the latest observations. Review the evidence before recording any decision.")
                 st.caption("The assistant offers a suggestion; it never acts on the plot.")
+                st.caption("Live-model requests contain weather measurements and decision labels only. Field notes and account emails are excluded.")
                 if st.button("Review this plot", type="primary", icon=":material/psychology:", width="stretch"):
                     with st.spinner("Reviewing recent conditions…"):
                         st.session_state.current_recommendation = create_and_log_recommendation(plot_id)

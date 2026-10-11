@@ -8,7 +8,7 @@ The app includes a deterministic mock recommender so the demo works without an A
 
 ## Information Security mobile assignment
 
-The Streamlit app uses Google OpenID Connect for identity and Google Authenticator TOTP as a second factor. The Expo assignment in [`mobile/`](mobile/) uses a React Native client and PHP API in [`backend/`](backend/); it supports email/password or Google identity, TOTP, Argon2id password hashes with per-password salts and a private pepper, and four server-checked roles. Local development still works with SQLite and XAMPP MySQL. For the shared cloud setup, both server backends use Supabase PostgreSQL: plot observations and decisions are shared, while the two apps retain their separate sign-in records. See [`backend/supabase_schema.sql`](backend/supabase_schema.sql), [`mobile/README.md`](mobile/README.md), and the two-page paper in [`docs/Secure_Login_System_Implementation_Report.docx`](docs/Secure_Login_System_Implementation_Report.docx).
+The Streamlit app uses Google OpenID Connect for identity and Google Authenticator TOTP as a second factor, with a 12-hour re-verification interval. The Expo assignment in [`mobile/`](mobile/) uses a React Native client and PHP API in [`backend/`](backend/); it supports invitation-only email/password or verified Google identity, TOTP, Argon2id password hashes with per-password salts and a private pepper, and four server-checked roles. Local development still works with SQLite and XAMPP MySQL. For the shared cloud setup, both server backends use Supabase PostgreSQL: plot observations and decisions are shared, while the two apps retain their separate sign-in records. See [`backend/supabase_schema.sql`](backend/supabase_schema.sql), [`mobile/README.md`](mobile/README.md), and the two-page paper in [`docs/Secure_Login_System_Implementation_Report.docx`](docs/Secure_Login_System_Implementation_Report.docx). This remains an educational prototype; see the security limitations below before public deployment.
 
 ## Setup
 
@@ -47,6 +47,14 @@ LLM_API_KEY = "YOUR-PROVIDER-API-KEY"
 The endpoint should support `POST {LLM_BASE_URL}/chat/completions` and return an OpenAI-compatible chat-completions response. Get the URL, model name, and key from your chosen model host; do not commit them to GitHub. The app falls back to its mock recommender if the model URL or model name is missing.
 
 The local SQLite database is suitable for a prototype demo and is not configured as durable shared storage for a hosted production app.
+
+## Security status and remaining work
+
+This project is not production-safe yet. Live model requests exclude free-text field notes and account emails, Streamlit elevated roles are synchronized from the configured email allowlists, and TOTP verification expires after 12 hours. Expo password registration is limited to manager-invited addresses while email verification is unavailable. These controls reduce risk but do not replace a production review.
+
+Before public use, configure account recovery and email verification, shared server-side rate limiting and monitoring, HTTPS for the PHP API, a least-privilege database role, tested backup restoration, and a documented secret rotation process. The local XAMPP API is HTTP-only and should be used only on localhost or a trusted private network. Browser clients store their bearer token in localStorage, which is accessible to same-origin JavaScript; protect the app against script injection and prefer a server-managed secure cookie for a production web client.
+
+Credentials previously pasted into chat should be treated as compromised. Rotate the Google OAuth client secret, LLM provider key, and Supabase database password, then update local secrets, Community Cloud Secrets, the private PHP config, and any CI secrets. Rotate the Streamlit cookie secret only with an MFA migration/re-enrollment plan because the app also uses it to encrypt saved TOTP secrets; changing it without migration makes enrolled authenticator secrets unreadable.
 
 ## Shared Supabase database
 
