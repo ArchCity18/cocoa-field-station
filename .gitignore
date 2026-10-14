@@ -21,3 +21,8 @@ backend/config.php
 *.bak
 *.pem
 *.key
+node_modules/
+supabase/
+.vscode/
+*.log
+.DS_Store

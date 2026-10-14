@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.kilo/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Database
+cocoa.db
+backups/
+
+# Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/.env
+
+# Backend
+backend/vendor/
+backend/.env
+backend/config.php
+**/config.php
+
+# Docker
+*.dump
+*.backup
+*.bak
+*.pem
+*.key
+
+# IDE
+.vscode/
+*.log
+.DS_Store
+
+# Node modules
+node_modules/
+
+# Supabase
+supabase/

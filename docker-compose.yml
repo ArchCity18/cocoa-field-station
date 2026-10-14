@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: cocoa_field_station
+      POSTGRES_USER: cocoa_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/aws_postgres_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cocoa_app -d cocoa_field_station"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      COCOA_DATABASE_URL: postgresql://cocoa_app:${POSTGRES_PASSWORD:-local_dev_password}@postgres:5432/cocoa_field_station?sslmode=disable
+      COCOA_STREAMLIT_SECRETS_TOML: |
+        [auth]
+        cookie_secret = "${STREAMLIT_COOKIE_SECRET:-local_development_cookie_secret_at_least_32_chars_long}"
+        [auth.google]
+        client_id = "${STREAMLIT_GOOGLE_CLIENT_ID:-}"
+        client_secret = "${STREAMLIT_GOOGLE_CLIENT_SECRET:-}"
+        server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+        redirect_uri = "http://localhost:8501/oauth2callback"
+      LLM_MOCK: "1"
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./app.py:/app/app.py:ro
+      - ./agent.py:/app/agent.py:ro
+      - ./db.py:/app/db.py:ro
+      - ./totp.py:/app/totp.py:ro
+      - ./risk.py:/app/risk.py:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data:ro
+      - ./assets:/app/assets:ro
+
+  php-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      COCOA_DB_DRIVER: pgsql
+      COCOA_DB_HOST: postgres
+      COCOA_DB_PORT: 5432
+      COCOA_DB_NAME: cocoa_field_station
+      COCOA_DB_USER: cocoa_app
+      COCOA_DB_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password}
+      COCOA_DB_DSN: ""
+      COCOA_PEPPER: ${PHP_PEPPER:-local_development_pepper_at_least_32_chars_long}
+      COCOA_ALLOWED_ORIGINS: '["http://localhost:8081", "http://localhost:8501", "http://127.0.0.1:8081", "http://127.0.0.1:8501"]'
+      COCOA_GOOGLE_WEB_CLIENT_ID: ${GOOGLE_WEB_CLIENT_ID:-}
+      COCOA_GOOGLE_ANDROID_CLIENT_ID: ${GOOGLE_ANDROID_CLIENT_ID:-}
+      COCOA_GOOGLE_IOS_CLIENT_ID: ${GOOGLE_IOS_CLIENT_ID:-}
+      COCOA_LLM_ENABLED: "false"
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/api.php:/var/www/html/cocoa-security/api.php:ro
+
+volumes:
+  postgres_data:
