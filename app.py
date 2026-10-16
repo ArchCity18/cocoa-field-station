@@ -188,6 +188,8 @@ def require_authenticator():
 
     def email_set(value):
         if isinstance(value, str):
+            # Support comma or space separated
+            value = value.replace(" ", ",")
             value = value.split(",")
         return {str(item).strip().lower() for item in value if str(item).strip()}
 
