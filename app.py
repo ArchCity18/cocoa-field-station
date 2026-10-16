@@ -198,6 +198,12 @@ def require_authenticator():
         bootstrap_role = "admin"
     elif email in email_set(st.secrets.get("MANAGER_EMAILS", [])):
         bootstrap_role = "manager"
+    elif email in email_set(st.secrets.get("AGRONOMIST_EMAILS", [])):
+        bootstrap_role = "agronomist"
+    elif email in email_set(st.secrets.get("AUDITOR_EMAILS", [])):
+        bootstrap_role = "auditor"
+    elif email in email_set(st.secrets.get("VIEWER_EMAILS", [])):
+        bootstrap_role = "viewer"
     account = db.get_or_create_auth_account(sub, email, name, bootstrap_role=bootstrap_role)
     if not account:
         st.error("This account has been removed from the field station. Contact a manager if access should be restored.")
