@@ -191,7 +191,10 @@ def require_authenticator():
             # Support comma or space separated
             value = value.replace(" ", ",")
             value = value.split(",")
-        return {str(item).strip().lower() for item in value if str(item).strip()}
+            return {str(item).strip().lower() for item in value if str(item).strip()}
+        if isinstance(value, (list, tuple, set)):
+            return {str(item).strip().lower() for item in value if str(item).strip()}
+        return set()
 
     bootstrap_role = "inputer"
     if email in email_set(st.secrets.get("ADMINISTRATOR_EMAILS", [])):
