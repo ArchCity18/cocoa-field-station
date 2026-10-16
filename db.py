@@ -136,7 +136,7 @@ def init_db():
 
 
 def get_or_create_auth_account(google_sub, email, name, bootstrap_role="inputer"):
-    allowed_roles = {"inputer", "admin", "administrator", "manager"}
+    allowed_roles = {"viewer", "inputer", "agronomist", "auditor", "manager", "admin", "administrator"}
     if bootstrap_role not in allowed_roles:
         bootstrap_role = "inputer"
     email = email.strip().lower()
